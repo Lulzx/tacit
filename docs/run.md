@@ -44,8 +44,9 @@ After the ready banner the guest, unattended:
 2. runs the bundled program `C = (A + B) × D`, printing its live graph
    (Add, Multiply, the edge, caps, parallel axes) and the provenance of `C`
    plus per-node payload-byte counters,
-3. runs one granted agent-shaped transform that summarizes the live graph
-   with two fan-out summaries (ordered by the policy),
+3. runs three granted agent-shaped transforms over the live graph, ordered
+   by a Uiua multi-agent planner (a priority key, highest first; the plan is
+   `⊏ ⍖ ⊡ 1`, select on grade-down of the picked priority column),
 4. exercises the subset (reduce, reshape, grade/select/keep, rank-wise map,
    the capabilities table),
 5. demonstrates effects (propose → simulate → validate → commit; a missing or

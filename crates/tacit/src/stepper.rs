@@ -225,28 +225,34 @@ fn order_ready(_g: &Graph, opts: &RunOpts, ready: &[u32]) -> alloc::vec::Vec<u32
         Some(prog) => {
             let table: alloc::vec::Vec<[i64; 2]> =
                 ready.iter().map(|id| [*id as i64, *id as i64]).collect();
-            let mut pg = Graph::new(prog);
-            pg.ready_input = Some(table);
-            let popts = RunOpts { realm: opts.realm, live: None, policy: None, interactive: false };
-            let _ = run(&mut pg, &popts);
-            // The policy's output is a Uiua value: a grade vector (`⍏`/`⍖`)
-            // or an ordered table.  Its first column is the run order.
-            match pg.last.and_then(|i| pg.vals[i].clone()) {
-                Some(v) => {
-                    let rows = if v.rank >= 1 { v.shape[0] } else { 1 };
-                    let cols = if v.rank >= 2 { v.shape[1] } else { 1 };
-                    let mut out = alloc::vec::Vec::with_capacity(rows);
-                    unsafe {
-                        let p = v.data as *const i64;
-                        for r in 0..rows {
-                            out.push(*p.add(r * cols) as u32);
-                        }
-                    }
-                    out
-                }
-                None => ready.to_vec(),
-            }
+            policy_order(prog, &table)
         }
+    }
+}
+
+/// Run a Uiua policy/planner program over a `[key, value]` table and return
+/// the first column of its output: the ordered keys.  This is the mechanism
+/// behind both node ordering (the scheduler policy) and the multi-agent
+/// planner (the plan is the sorted agent table; the ids are its first column).
+pub fn policy_order(policy: &Program, table: &[[i64; 2]]) -> alloc::vec::Vec<u32> {
+    let mut pg = Graph::new(policy);
+    pg.ready_input = Some(table.to_vec());
+    let popts = RunOpts { realm: 0, live: None, policy: None, interactive: false };
+    let _ = run(&mut pg, &popts);
+    match pg.last.and_then(|i| pg.vals[i].clone()) {
+        Some(v) => {
+            let rows = if v.rank >= 1 { v.shape[0] } else { 1 };
+            let cols = if v.rank >= 2 { v.shape[1] } else { 1 };
+            let mut out = alloc::vec::Vec::with_capacity(rows);
+            unsafe {
+                let p = v.data as *const i64;
+                for r in 0..rows {
+                    out.push(*p.add(r * cols) as u32);
+                }
+            }
+            out
+        }
+        None => alloc::vec::Vec::new(),
     }
 }
 

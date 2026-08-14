@@ -29,6 +29,9 @@ global_asm!(include_str!("boot.s"));
 // UIR payloads produced by the host compiler (see build.sh).
 static TINY_UIR: &[u8] = include_bytes!("../embedded/tiny.uir");
 static AGENT_UIR: &[u8] = include_bytes!("../embedded/agent.uir");
+static AGENT_SORT_UIR: &[u8] = include_bytes!("../embedded/agent-sort.uir");
+static AGENT_PICK_UIR: &[u8] = include_bytes!("../embedded/agent-pick.uir");
+static PLAN_UIR: &[u8] = include_bytes!("../embedded/plan.uir");
 static SUBSET_UIR: &[u8] = include_bytes!("../embedded/subset.uir");
 static MACHINE_UIR: &[u8] = include_bytes!("../embedded/machine.uir");
 static GRAPH_UIR: &[u8] = include_bytes!("../embedded/graph.uir");
@@ -45,6 +48,9 @@ static mut CONSOLE: Option<console::Console> = None;
 
 static mut TINY: Option<Program> = None;
 static mut AGENT: Option<Program> = None;
+static mut AGENT_SORT: Option<Program> = None;
+static mut AGENT_PICK: Option<Program> = None;
+static mut PLAN: Option<Program> = None;
 static mut SUBSET: Option<Program> = None;
 static mut MACHINE: Option<Program> = None;
 static mut GRAPH: Option<Program> = None;
@@ -162,6 +168,9 @@ pub extern "C" fn kernel_main(fdt_ptr: usize) -> ! {
     unsafe {
         TINY = Some(uir::decode(TINY_UIR).unwrap());
         AGENT = Some(uir::decode(AGENT_UIR).unwrap());
+        AGENT_SORT = Some(uir::decode(AGENT_SORT_UIR).unwrap());
+        AGENT_PICK = Some(uir::decode(AGENT_PICK_UIR).unwrap());
+        PLAN = Some(uir::decode(PLAN_UIR).unwrap());
         SUBSET = Some(uir::decode(SUBSET_UIR).unwrap());
         MACHINE = Some(uir::decode(MACHINE_UIR).unwrap());
         GRAPH = Some(uir::decode(GRAPH_UIR).unwrap());
@@ -201,7 +210,21 @@ pub extern "C" fn kernel_main(fdt_ptr: usize) -> ! {
     run_uir("provenance", prog!(PROVENANCE), Some(&tg), None);
     console_write_str("\n");
 
-    run_uir("agent", prog!(AGENT), Some(&tg), Some(prog!(POLICY)));
+    // Multi-agent planner: three granted transforms over the live graph,
+    // ordered by a Uiua plan (priority key, highest first).  Each agent also
+    // runs with the node-level scheduling policy.
+    let agents: [(&str, &'static Program, i64); 3] = [
+        ("agent", prog!(AGENT), 1),
+        ("agent-sort", prog!(AGENT_SORT), 3),
+        ("agent-pick", prog!(AGENT_PICK), 2),
+    ];
+    let table: alloc::vec::Vec<[i64; 2]> =
+        agents.iter().enumerate().map(|(i, a)| [i as i64, a.2]).collect();
+    let plan = stepper::policy_order(prog!(PLAN), &table);
+    for id in plan {
+        let (name, aprog, _) = agents[id as usize];
+        run_uir(name, aprog, Some(&tg), Some(prog!(POLICY)));
+    }
     console_write_str("\n");
 
     run_uir("subset", prog!(SUBSET), Some(&tg), None);

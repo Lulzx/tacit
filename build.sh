@@ -35,6 +35,9 @@ mkdir -p "$EMB"
 echo "-- compiling Uiua subset to UIR"
 "$HC" --no-fuse -o "$EMB/tiny.uir"     uiua/tiny.ua
 "$HC" --no-fuse -o "$EMB/agent.uir"    uiua/agent.ua
+"$HC" --no-fuse -o "$EMB/agent-sort.uir" uiua/agent-sort.ua
+"$HC" --no-fuse -o "$EMB/agent-pick.uir" uiua/agent-pick.ua
+"$HC" --no-fuse -o "$EMB/plan.uir"     uiua/plan.ua
 "$HC" --no-fuse -o "$EMB/subset.uir"   uiua/subset.ua
 "$HC" --no-fuse -o "$EMB/machine.uir"  uiua/machine.ua
 "$HC" --no-fuse -o "$EMB/graph.uir"    uiua/graph.ua
