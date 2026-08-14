@@ -364,13 +364,12 @@ impl Session {
 
     fn cmd_help(&mut self) -> Result<Outcome, String> {
         Ok(Outcome::Handled(
-            "names bind immutable values; | is a transform graph\n\
-             nav:     pwd ls cd pushd popd dirs tree find\n\
-             names:   cat echo printf touch mkdir cp ln mv rm rmdir\n\
-             text:    head tail wc nl tac cut tr tee seq grep sort uniq\n\
-             meta:    history undo inspect stat why explain graph help\n\
-             shell:   alias type env export test true false clear\n\
-             tacit:   date/whoami/uname are projections, not Unix"
+            "nav     pwd ls cd pushd popd dirs tree find\n\
+             names   cat echo printf touch mkdir cp ln mv rm rmdir\n\
+             text    head tail wc nl tac cut tr tee seq grep sort uniq\n\
+             meta    history undo inspect stat why explain graph help\n\
+             shell   alias type env export test true false clear\n\
+             date, whoami, and uname print Tacit facts, not the host's"
                 .to_string(),
         ))
     }
