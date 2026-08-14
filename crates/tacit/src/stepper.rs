@@ -53,6 +53,7 @@ pub struct Graph<'a> {
     pub done: alloc::vec::Vec<bool>,
     pub consumers: alloc::vec::Vec<u32>,
     pub ready_input: Option<alloc::vec::Vec<[i64; 2]>>, // for ReadySet (policy)
+    pub request: Option<i64>,                           // for Request (authorize policy)
     pub last: Option<usize>,                            // most recently completed node
     pub node_bytes: alloc::vec::Vec<u64>,               // per-node payload bytes moved
 }
@@ -74,6 +75,7 @@ impl<'a> Graph<'a> {
             done: alloc::vec![false; n],
             consumers,
             ready_input: None,
+            request: None,
             last: None,
             node_bytes: alloc::vec![0u64; n],
         }
@@ -182,23 +184,41 @@ pub struct RunOpts<'a> {
     pub realm: u32,
     pub live: Option<&'a Graph<'a>>, // for GraphNodes/Edges sources
     pub policy: Option<&'a Program>, // ready-set ordering policy
+    pub scheduler: Option<&'a Program>, // per-iteration scheduling decision
     pub interactive: bool,
 }
 
 /// Run a program to completion.  Returns Err on the first runtime error.
+///
+/// Each iteration the *decision* of which ready nodes to run, and on which
+/// engine, comes from the scheduler program when one is supplied; otherwise
+/// the default `ready_set` + `order_ready` + `nd.engine` path is used (so all
+/// existing programs, benches, agents and the shell are unchanged).
 pub fn run(g: &mut Graph, opts: &RunOpts) -> Result<(), &'static str> {
     loop {
-        let ready = g.ready_set();
-        if ready.is_empty() {
+        let schedule = match opts.scheduler {
+            Some(sched) => run_scheduler(sched, g),
+            None => {
+                let ready = g.ready_set();
+                if ready.is_empty() {
+                    break;
+                }
+                let order = order_ready(g, opts, &ready);
+                order
+                    .into_iter()
+                    .map(|id| [id, g.prog.nodes[id as usize].engine as u32])
+                    .collect()
+            }
+        };
+        if schedule.is_empty() {
             break;
         }
-        let order = order_ready(g, opts, &ready);
-        for id in order {
+        for [id, engine] in schedule {
             let id = id as usize;
             if g.done[id] {
                 continue;
             }
-            let r = step_node(g, opts, id);
+            let r = step_node(g, opts, id, engine as u8);
             match r {
                 Ok(v) => {
                     g.vals[id] = v;
@@ -219,6 +239,83 @@ pub fn run(g: &mut Graph, opts: &RunOpts) -> Result<(), &'static str> {
     Ok(())
 }
 
+/// Run the scheduler program against the live graph and return the
+/// `[id, engine]` schedule it decides.  Falls back to the default order on
+/// any error.  The scheduler program itself runs with `scheduler: None` to
+/// avoid infinite recursion.
+fn run_scheduler(scheduler: &Program, g: &Graph) -> alloc::vec::Vec<[u32; 2]> {
+    let mut sg = Graph::new(scheduler);
+    let sopts = RunOpts { realm: 0, live: Some(g), policy: None, scheduler: None, interactive: false };
+    if run(&mut sg, &sopts).is_err() {
+        return g
+            .ready_set()
+            .into_iter()
+            .map(|id| [id, g.prog.nodes[id as usize].engine as u32])
+            .collect();
+    }
+    // The schedule is the last node (the trailing `Sched` line keeps the
+    // couple alive as the final output; a `&display` tee would consume and
+    // free it).  Read it from `pg.last`.
+    match sg.last.and_then(|i| sg.vals[i].clone()) {
+        Some(v) => {
+            let sched = read_schedule(&v);
+            display_schedule(&sched);
+            sched
+        }
+        None => alloc::vec::Vec::new(),
+    }
+}
+
+/// Read a `[2, n]` schedule value: row 0 = ordered node ids, row 1 = engines.
+/// Render a `[id, engine]` schedule for the boot log (the scheduler program
+/// computes the decision; this is just the demo display).
+fn display_schedule(sched: &[[u32; 2]]) {
+    crate::console_write_str("schedule: ");
+    for (i, s) in sched.iter().enumerate() {
+        if i > 0 {
+            crate::console_write_str(" ");
+        }
+        crate::console_write_str(itoa(s[0]));
+    }
+    crate::console_write_str("\n  ");
+    for (i, s) in sched.iter().enumerate() {
+        if i > 0 {
+            crate::console_write_str(" ");
+        }
+        crate::console_write_str(itoa(s[1]));
+    }
+    crate::console_write_str("\n");
+}
+
+fn itoa(mut n: u32) -> &'static str {
+    static mut BUF: [u8; 12] = [0; 12];
+    let mut i = 11;
+    if n == 0 {
+        unsafe { BUF[11] = b'0'; }
+        return unsafe { core::str::from_utf8_unchecked(&BUF[11..12]) };
+    }
+    while n > 0 {
+        unsafe { BUF[i] = b'0' + (n % 10) as u8; }
+        n /= 10;
+        i -= 1;
+    }
+    unsafe { core::str::from_utf8_unchecked(&BUF[i + 1..12]) }
+}
+
+fn read_schedule(v: &Value) -> alloc::vec::Vec<[u32; 2]> {
+    let n = v.shape[1];
+    let mut out = alloc::vec::Vec::with_capacity(n);
+    unsafe {
+        let p = v.data as *const i64;
+        for i in 0..n {
+            let id = *p.add(i) as u32; // row 0 = ids
+            let engine = *p.add(n + i) as u8; // row 1 = engines
+            out.push([id, engine as u32]);
+        }
+    }
+    out
+}
+
 fn order_ready(_g: &Graph, opts: &RunOpts, ready: &[u32]) -> alloc::vec::Vec<u32> {
     match opts.policy {
         None => ready.to_vec(),
@@ -237,7 +334,7 @@ fn order_ready(_g: &Graph, opts: &RunOpts, ready: &[u32]) -> alloc::vec::Vec<u32
 pub fn policy_order(policy: &Program, table: &[[i64; 2]]) -> alloc::vec::Vec<u32> {
     let mut pg = Graph::new(policy);
     pg.ready_input = Some(table.to_vec());
-    let popts = RunOpts { realm: 0, live: None, policy: None, interactive: false };
+    let popts = RunOpts { realm: 0, live: None, policy: None, scheduler: None, interactive: false };
     let _ = run(&mut pg, &popts);
     match pg.last.and_then(|i| pg.vals[i].clone()) {
         Some(v) => {
@@ -300,7 +397,7 @@ fn alloc_array(dtype: u8, rank: u8, shape: &[usize; 4]) -> Result<Value, &'stati
     Ok(Value { data, dtype, rank, shape: sh, region: Some(region) })
 }
 
-fn step_node(g: &mut Graph, opts: &RunOpts, id: usize) -> Result<Option<Value>, &'static str> {
+fn step_node(g: &mut Graph, opts: &RunOpts, id: usize, engine: u8) -> Result<Option<Value>, &'static str> {
     let nd = &g.prog.nodes[id];
     let c = &g.prog.consts[id];
     match nd.op {
@@ -330,13 +427,13 @@ fn step_node(g: &mut Graph, opts: &RunOpts, id: usize) -> Result<Option<Value>, 
         OP_ADD | OP_SUB | OP_MUL | OP_DIV => {
             let a = input(g, nd, 0)?;
             let b = input(g, nd, 1)?;
-            let r = elementwise(nd.op, &a, &b, nd.engine)?;
+            let r = elementwise(nd.op, &a, &b, engine)?;
             if let Some(v) = &r {
                 unsafe {
                     let moved = (v.byte_len() + a.byte_len() + b.byte_len()) as u64;
                     crate::kernel::COUNTERS.payload_moved += moved;
                     crate::kernel::COUNTERS.kernel_entries += 1;
-                    crate::kernel::COUNTERS.engine_entries[nd.engine as usize] += 1;
+                    crate::kernel::COUNTERS.engine_entries[engine as usize] += 1;
                     g.node_bytes[id] += moved;
                 }
             }
@@ -346,13 +443,13 @@ fn step_node(g: &mut Graph, opts: &RunOpts, id: usize) -> Result<Option<Value>, 
             let a = input(g, nd, 0)?;
             let b = input(g, nd, 1)?;
             let d = input(g, nd, 2)?;
-            let r = elementwise_fused(&a, &b, &d, nd.engine)?;
+            let r = elementwise_fused(&a, &b, &d, engine)?;
             if let Some(v) = &r {
                 unsafe {
                     let moved = (v.byte_len() + a.byte_len() + b.byte_len() + d.byte_len()) as u64;
                     crate::kernel::COUNTERS.payload_moved += moved;
                     crate::kernel::COUNTERS.kernel_entries += 1;
-                    crate::kernel::COUNTERS.engine_entries[nd.engine as usize] += 1;
+                    crate::kernel::COUNTERS.engine_entries[engine as usize] += 1;
                     g.node_bytes[id] += moved;
                 }
             }
@@ -484,7 +581,7 @@ fn step_node(g: &mut Graph, opts: &RunOpts, id: usize) -> Result<Option<Value>, 
             let a = input(g, nd, 0)?;
             let b = input(g, nd, 1)?;
             let (m, k, n) = (a.shape[0], a.shape[1], b.shape[1]);
-            let sme = nd.engine == ENGINE_SME && crate::sme::available();
+            let sme = engine == ENGINE_SME && crate::sme::available();
             if sme {
                 // The SME engine executes this node: streaming mode is entered
                 // and exited, then the product is computed.  (The
@@ -570,6 +667,16 @@ fn step_node(g: &mut Graph, opts: &RunOpts, id: usize) -> Result<Option<Value>, 
                         *p.add(r * 2) = row[0];
                         *p.add(r * 2 + 1) = row[1];
                     }
+                }
+                Ok(Some(v))
+            }
+            None => Ok(Some(scalar_value())),
+        },
+        OP_REQUEST => match &g.request {
+            Some(k) => {
+                let mut v = alloc_array(DTYPE_I64, 0, &[1, 1, 1, 1])?;
+                unsafe {
+                    *(v.data as *mut i64) = *k;
                 }
                 Ok(Some(v))
             }
@@ -786,6 +893,23 @@ fn step_node(g: &mut Graph, opts: &RunOpts, id: usize) -> Result<Option<Value>, 
                         *p.add(r * 4 + cc) = *val;
                     }
                 }
+            }
+            Ok(Some(v))
+        }
+        OP_COUPLE => {
+            // ⊟ a b: couple two rank-1 vectors into a [2, n] table (row 0 = a,
+            // row 1 = b).  The scheduler emits ⊟ ordered_ids ordered_engines.
+            let a = input(g, nd, 0)?;
+            let b = input(g, nd, 1)?;
+            let n = a.shape[0];
+            if b.shape[0] != n {
+                return Err("⊟ length mismatch");
+            }
+            let mut v = alloc_array(a.dtype, 2, &[2, n, 1, 1])?;
+            let es = a.elem_size();
+            unsafe {
+                core::ptr::copy_nonoverlapping(a.data as *const u8, v.data as *mut u8, n * es);
+                core::ptr::copy_nonoverlapping(b.data as *const u8, (v.data + n * es) as *mut u8, n * es);
             }
             Ok(Some(v))
         }

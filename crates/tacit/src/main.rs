@@ -43,6 +43,8 @@ static OBJECTS_UIR: &[u8] = include_bytes!("../embedded/objects.uir");
 static REPLAY_UIR: &[u8] = include_bytes!("../embedded/replay.uir");
 static BENCH_SEND_UIR: &[u8] = include_bytes!("../embedded/bench-send.uir");
 static POLICY_UIR: &[u8] = include_bytes!("../embedded/policy.uir");
+static SCHEDULER_UIR: &[u8] = include_bytes!("../embedded/scheduler.uir");
+static AUTHORIZE_UIR: &[u8] = include_bytes!("../embedded/authorize.uir");
 static BENCH_FUSED_UIR: &[u8] = include_bytes!("../embedded/bench-fused.uir");
 static BENCH_UNFUSED_UIR: &[u8] = include_bytes!("../embedded/bench-unfused.uir");
 static BENCH_MATMUL_UIR: &[u8] = include_bytes!("../embedded/bench-matmul.uir");
@@ -63,6 +65,8 @@ static mut OBJPROG: Option<Program> = None;
 static mut REPLAY: Option<Program> = None;
 static mut BENCH_SEND: Option<Program> = None;
 static mut POLICY: Option<Program> = None;
+static mut SCHEDULER: Option<Program> = None;
+static mut AUTHORIZE: Option<Program> = None;
 static mut BENCH_FUSED: Option<Program> = None;
 static mut BENCH_UNFUSED: Option<Program> = None;
 static mut BENCH_MATMUL: Option<Program> = None;
@@ -186,6 +190,8 @@ pub extern "C" fn kernel_main(fdt_ptr: usize) -> ! {
         REPLAY = Some(uir::decode(REPLAY_UIR).unwrap());
         BENCH_SEND = Some(uir::decode(BENCH_SEND_UIR).unwrap());
         POLICY = Some(uir::decode(POLICY_UIR).unwrap());
+        SCHEDULER = Some(uir::decode(SCHEDULER_UIR).unwrap());
+        AUTHORIZE = Some(uir::decode(AUTHORIZE_UIR).unwrap());
         BENCH_FUSED = Some(uir::decode(BENCH_FUSED_UIR).unwrap());
         BENCH_UNFUSED = Some(uir::decode(BENCH_UNFUSED_UIR).unwrap());
         BENCH_MATMUL = Some(uir::decode(BENCH_MATMUL_UIR).unwrap());
@@ -203,7 +209,7 @@ pub extern "C" fn kernel_main(fdt_ptr: usize) -> ! {
 
     // The bundled program is the live graph the rest of the demo inspects.
     let mut tg = Graph::new(prog!(TINY));
-    let top = RunOpts { realm: 0, live: None, policy: None, interactive: false };
+    let top = RunOpts { realm: 0, live: None, policy: None, scheduler: Some(prog!(SCHEDULER)), interactive: false };
     if let Err(e) = stepper::run(&mut tg, &top) {
         console_write_str("[tiny] runtime error: ");
         console_write_str(e);
@@ -246,6 +252,9 @@ pub extern "C" fn kernel_main(fdt_ptr: usize) -> ! {
 
     // Mechanism self-test: capability enforcement (revoke / forge / unmet
     // dependency / in-place mutation) exercised at the operation-array ABI.
+    // The authorization *policy* is the Uiua program; the PAC token check is
+    // the Rust mechanism.
+    kernel::set_authorize_prog(prog!(AUTHORIZE));
     kernel_selftest();
 
     // Benches: the programs report their own counters.
@@ -290,7 +299,7 @@ pub extern "C" fn kernel_main(fdt_ptr: usize) -> ! {
 
 fn run_uir(name: &str, prog: &'static Program, live: Option<&Graph<'static>>, policy: Option<&'static Program>) {
     let mut g = Graph::new(prog);
-    let opts = RunOpts { realm: 0, live, policy, interactive: false };
+    let opts = RunOpts { realm: 0, live, policy, scheduler: None, interactive: false };
     if let Err(e) = stepper::run(&mut g, &opts) {
         console_write_str("[");
         console_write_str(name);
@@ -478,6 +487,21 @@ pub extern "C" fn irq_dispatch() {
     gic::eoi(irq);
 }
 
+fn itoa(mut n: u32) -> &'static str {
+    static mut BUF: [u8; 12] = [0; 12];
+    let mut i = 11;
+    if n == 0 {
+        unsafe { BUF[11] = b'0'; }
+        return unsafe { core::str::from_utf8_unchecked(&BUF[11..12]) };
+    }
+    while n > 0 {
+        unsafe { BUF[i] = b'0' + (n % 10) as u8; }
+        n /= 10;
+        i -= 1;
+    }
+    unsafe { core::str::from_utf8_unchecked(&BUF[i + 1..12]) }
+}
+
 #[panic_handler]
 fn panic(info: &PanicInfo) -> ! {
     uart::write_str("\n[panic] ");
@@ -487,6 +511,8 @@ fn panic(info: &PanicInfo) -> ! {
     if let Some(loc) = info.location() {
         uart::write_str(" @ ");
         uart::write_str(loc.file());
+        uart::write_str(":");
+        uart::write_str(itoa(loc.line()));
     }
     uart::write_str("\n");
     halt();

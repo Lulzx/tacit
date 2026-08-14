@@ -78,6 +78,8 @@ pub const OP_REPLAY_KEYS: u8 = 41; // replay the next recorded keyboard line
 pub const OP_REPLAY_CLOCK: u8 = 42; // replay the next recorded clock read
 pub const OP_TRACE: u8 = 43; // the recorded effect-input trace as a table
 pub const OP_MATMUL: u8 = 44; // f32 matrix multiply (engine = sme)
+pub const OP_COUPLE: u8 = 45; // ⊟ couple two rank-1 vectors into a [2, n] table
+pub const OP_REQUEST: u8 = 46; // source: a Rust-set scalar (authorize policy input)
 
 pub const NONE: u32 = 0xffff_ffff;
 
@@ -148,6 +150,8 @@ pub fn op_name(op: u8) -> &'static str {
         OP_REPLAY_CLOCK => "ReplayClock",
         OP_TRACE => "Trace",
         OP_MATMUL => "Matmul",
+        OP_COUPLE => "Couple",
+        OP_REQUEST => "Request",
         _ => "?",
     }
 }

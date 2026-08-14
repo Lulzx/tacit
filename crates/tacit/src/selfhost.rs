@@ -26,6 +26,8 @@ const PAIRS: &[Pair] = &[
     Pair { name: "replay.ua", src: include_str!("../../../uiua/replay.ua"), uir: include_bytes!("../embedded/replay.uir") },
     Pair { name: "bench-send.ua", src: include_str!("../../../uiua/bench-send.ua"), uir: include_bytes!("../embedded/bench-send.uir") },
     Pair { name: "bench-matmul.ua", src: include_str!("../../../uiua/bench-matmul.ua"), uir: include_bytes!("../embedded/bench-matmul.uir") },
+    Pair { name: "scheduler.ua", src: include_str!("../../../uiua/scheduler.ua"), uir: include_bytes!("../embedded/scheduler.uir") },
+    Pair { name: "authorize.ua", src: include_str!("../../../uiua/authorize.ua"), uir: include_bytes!("../embedded/authorize.uir") },
 ];
 
 pub fn verify() {

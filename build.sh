@@ -7,6 +7,7 @@ cd "$(dirname "$0")"
 
 ARCH="${ARCH:-aarch64}"
 POLICY="${POLICY:-policy.ua}"
+SCHEDULER="${SCHEDULER:-scheduler.ua}"
 
 # Law 1 / first milestone: the only supported boot architecture is AArch64.
 case "$ARCH" in
@@ -46,6 +47,8 @@ echo "-- compiling Uiua subset to UIR"
 "$HC" --no-fuse -o "$EMB/replay.uir"   uiua/replay.ua
 "$HC" --no-fuse -o "$EMB/bench-send.uir" uiua/bench-send.ua
 "$HC" --no-fuse -o "$EMB/policy.uir"   "uiua/$POLICY"
+"$HC" --no-fuse -o "$EMB/scheduler.uir" "uiua/$SCHEDULER"
+"$HC" --no-fuse -o "$EMB/authorize.uir" uiua/authorize.ua
 "$HC" --fuse    -o "$EMB/bench-fused.uir"   uiua/bench-fusion.ua
 "$HC" --no-fuse -o "$EMB/bench-unfused.uir" uiua/bench-fusion.ua
 "$HC" --no-fuse -o "$EMB/bench-matmul.uir"  uiua/bench-matmul.ua

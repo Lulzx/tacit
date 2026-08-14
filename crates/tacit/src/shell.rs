@@ -86,6 +86,7 @@ pub fn run() -> ! {
             realm: 0,
             live: None,
             policy: None,
+            scheduler: None,
             interactive: false,
         };
         if let Err(e) = crate::stepper::run(&mut g, &opts) {

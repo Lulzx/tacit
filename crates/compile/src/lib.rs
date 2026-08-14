@@ -25,7 +25,6 @@ use alloc::collections::BTreeMap;
 use alloc::format;
 use alloc::string::String;
 use alloc::string::ToString;
-use alloc::vec;
 use alloc::vec::Vec;
 use uir::*;
 
@@ -257,6 +256,7 @@ enum Tok {
     Keep,
     Pick,
     Eq,
+    Couple,
     Fmt { template: Vec<u8> },
     Provenance(u32),
     Arrow,
@@ -420,6 +420,11 @@ fn tokenize(src: &str) -> Result<Vec<(usize, Tok)>, String> {
             ci += 1;
             continue;
         }
+        if c == '⊟' {
+            toks.push((line, Tok::Couple));
+            ci += 1;
+            continue;
+        }
         if c == '↯' {
             toks.push((line, Tok::Reshape { rank: 0, dims: [1, 1, 1, 1] }));
             ci += 1;
@@ -448,6 +453,7 @@ fn tokenize(src: &str) -> Result<Vec<(usize, Tok)>, String> {
                 "keep" => Tok::Keep,
                 "pick" => Tok::Pick,
                 "eq" => Tok::Eq,
+                "couple" => Tok::Couple,
                 "open" | "read" | "write" | "close" | "seek" | "fork" | "exec" | "thread"
                 | "spawn" | "pthread" | "socket" | "listen" | "accept" | "metal" | "cuda"
                 | "coreml" | "accelerate" | "file" | "ioctl" => {
@@ -807,6 +813,23 @@ impl Compiler {
                 Ok(())
             }
             Tok::Eq => self.binop(OP_EQ, "Equal"),
+            Tok::Couple => {
+                // ⊟ a b: couple two rank-1 vectors into a [2, n] table (row 0 =
+                // a, row 1 = b).  The scheduler uses this to emit [ids, engines].
+                // Right-to-left: the top of stack is the left argument.
+                let a = self.pop()?;
+                let b = self.pop()?;
+                if a.rank != 1 || b.rank != 1 {
+                    return Err(self.error("⊟ needs two rank-1 vectors"));
+                }
+                // Compile-time shapes are placeholders; the stepper allocates
+                // from runtime shapes and enforces length equality there.
+                let n = a.shape[0];
+                let shape = [2, n, 1, 1];
+                let node = self.emit(OP_COUPLE, a.dtype, 2, &shape, true, CAP_NONE, a.node, b.node, NONE, "Couple", &[]);
+                self.stack.push(SValue { node, dtype: a.dtype, rank: 2, shape });
+                Ok(())
+            }
             Tok::Reshape { rank, dims } => {
                 let data = self.pop()?;
                 let mut shape = [1u32; 4];
@@ -866,6 +889,12 @@ impl Compiler {
             }
             "ready" => {
                 self.source(OP_READY_SET, "ReadySet");
+                Ok(())
+            }
+            "request" => {
+                // A Rust-set scalar (the authorize policy's requested cap kind).
+                let n = self.emit(OP_REQUEST, DTYPE_I64, 0, &[1, 1, 1, 1], true, CAP_NONE, NONE, NONE, NONE, "Request", &[]);
+                self.stack.push(SValue { node: n, dtype: DTYPE_I64, rank: 0, shape: [1, 1, 1, 1] });
                 Ok(())
             }
             "caps" => {

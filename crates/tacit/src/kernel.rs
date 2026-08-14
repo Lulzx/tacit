@@ -250,6 +250,7 @@ pub fn caps_table() -> alloc::vec::Vec<[i64; 4]> {
 }
 
 pub fn grant(realm: u32, token: u64) -> bool {
+    invalidate_auth_cache();
     unsafe {
         if lookup(token).is_none() {
             return false;
@@ -265,6 +266,7 @@ pub fn grant(realm: u32, token: u64) -> bool {
 }
 
 pub fn revoke(realm: u32, token: u64) -> bool {
+    invalidate_auth_cache();
     unsafe {
         if let Some(r) = K.realms.get_mut(realm as usize) {
             if let Some(pos) = r.held.iter().position(|t| *t == token) {
@@ -300,6 +302,55 @@ pub fn holds_cap(realm: u32, token: u64) -> bool {
             false
         }
     }
+}
+
+// ---------------------------------------------------------------------------
+// Capability authorization policy (in Uiua)
+// ---------------------------------------------------------------------------
+// The *decision* of whether a realm holds a cap of a requested kind is a Uiua
+// program (`uiua/authorize.ua`); the *verification* of the capability token
+// itself (PAC) stays in Rust.  The decision is memoized per (realm, kind) and
+// invalidated on grant/revoke, so the hot path is not a Uiua run per op.
+
+static mut AUTH_PROG: Option<&'static uir::Program> = None;
+static mut AUTH_CACHE: [(u32, u8, bool); 16] = [(0, 0, false); 16];
+static mut AUTH_CACHE_LEN: usize = 0;
+
+pub fn set_authorize_prog(p: &'static uir::Program) {
+    unsafe { AUTH_PROG = Some(p); }
+}
+
+fn invalidate_auth_cache() {
+    unsafe { AUTH_CACHE_LEN = 0; }
+}
+
+/// Does `realm` hold a capability of `kind`?  The answer comes from the Uiua
+/// authorize program (memoized per (realm, kind)).
+fn authorize(realm: u32, kind: u8) -> bool {
+    unsafe {
+        for i in 0..AUTH_CACHE_LEN {
+            if AUTH_CACHE[i].0 == realm && AUTH_CACHE[i].1 == kind {
+                return AUTH_CACHE[i].2;
+            }
+        }
+    }
+    let prog = unsafe { AUTH_PROG }.expect("authorize program not set");
+    let mut pg = crate::stepper::Graph::new(prog);
+    pg.request = Some(kind as i64);
+    let popts = crate::stepper::RunOpts { realm, live: None, policy: None, scheduler: None, interactive: false };
+    let _ = crate::stepper::run(&mut pg, &popts);
+    let count = match pg.last.and_then(|i| pg.vals[i].clone()) {
+        Some(v) => unsafe { *(v.data as *const i64) },
+        None => 0,
+    };
+    let authorized = count > 0;
+    unsafe {
+        if AUTH_CACHE_LEN < AUTH_CACHE.len() {
+            AUTH_CACHE[AUTH_CACHE_LEN] = (realm, kind, authorized);
+            AUTH_CACHE_LEN += 1;
+        }
+    }
+    authorized
 }
 
 /// Return the first capability token of `kind` held by `realm` (0 if none).
@@ -489,7 +540,9 @@ fn exec(realm: u32, op: &OpKind) -> OpResult {
             }
         }
         OpKind::DisplaySend { cap, text } => {
-            if !cap_is(CAP_DISPLAY, *cap) || !holds_cap(realm, *cap) {
+            // PAC token verification (cap_is) is the Rust mechanism; whether
+            // the realm is *authorized* for the kind is the Uiua policy.
+            if !cap_is(CAP_DISPLAY, *cap) || !authorize(realm, CAP_DISPLAY) {
                 OpResult::CapError
             } else {
                 crate::console_write_bytes(text);
@@ -497,7 +550,7 @@ fn exec(realm: u32, op: &OpKind) -> OpResult {
             }
         }
         OpKind::KeyboardWait { cap } => {
-            if !cap_is(CAP_KEYBOARD, *cap) || !holds_cap(realm, *cap) {
+            if !cap_is(CAP_KEYBOARD, *cap) || !authorize(realm, CAP_KEYBOARD) {
                 OpResult::CapError
             } else {
                 match crate::keyboard_read_line() {
@@ -507,7 +560,7 @@ fn exec(realm: u32, op: &OpKind) -> OpResult {
             }
         }
         OpKind::Clock { cap } => {
-            if !cap_is(CAP_CLOCK, *cap) || !holds_cap(realm, *cap) {
+            if !cap_is(CAP_CLOCK, *cap) || !authorize(realm, CAP_CLOCK) {
                 OpResult::CapError
             } else {
                 OpResult::Clock(crate::clock_now())
