@@ -50,9 +50,10 @@ compiler) and steps them, so bindings persist as values.
 
 ## Reading
 
-- [proposal](openspec/changes/introduce-tacit/proposal.md) — why, what, the seven laws
-- [design](openspec/changes/introduce-tacit/design.md) — decisions
-- [research](openspec/changes/introduce-tacit/research.md) — why this can beat Linux on array work
+- [proposal](openspec/changes/archive/introduce-tacit/proposal.md) — why, what, the seven laws
+- [design](openspec/changes/archive/introduce-tacit/design.md) — decisions
+- [research](openspec/changes/archive/introduce-tacit/research.md) — why this can beat Linux on array work
+- [second milestone](openspec/changes/second-milestone/README.md) — engines, PAC, shell, store, replay, planner
 - [five primitives and the Unix/Metal noun map](docs/primitives.md)
 - [first-milestone Uiua subset](docs/subset.md)
 - [build and run](docs/run.md)
