@@ -770,7 +770,7 @@ function refreshConsoleChrome() {
 
 function bootConsole() {
   const scroll = document.getElementById('scroll');
-  scroll.innerHTML = '<div class="hint">names bind immutable values.\n| compiles to a transform graph — no processes, no byte pipes.\n\ntry:\n  echo "1 2 3 4" &gt; numbers\n  cat numbers | parse | square | sum\n  graph</div>';
+  scroll.innerHTML = '<div class="hint">names bind immutable values.\n| compiles to a transform graph — no processes, no byte pipes.\n\ntry:\n  echo "1 2 3 4" &gt; numbers\n  cat numbers | parse | square | sum &gt; total\n  why total\n  explain total</div>';
   refreshConsoleChrome();
 }
 
