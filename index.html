@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Tacit: watch the graph fire</title>
+<title>Tacit graph</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Azeret+Mono:ital,wght@0,400;0,500;0,600;1,400&family=Schibsted+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -459,54 +459,18 @@
     min-height: 0;
     min-width: 0;
     border-right: 1px solid var(--line);
+    background: var(--ink);
   }
-  .scroll {
+  #xterm {
     flex: 1;
     min-height: 0;
-    overflow: auto;
-    padding: 14px 16px 8px;
-    font: 13px/1.45 var(--mono);
-    white-space: pre-wrap;
-    word-break: break-word;
-  }
-  .scroll .cmd { color: var(--copper); }
-  .scroll .out { color: var(--fg); }
-  .scroll .err { color: var(--fault); }
-  .scroll .hint { color: var(--dim); }
-  .prompt {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    padding: 10px 14px;
-    background: var(--paper);
-    color: var(--paper-ink);
-    border-top: 1px solid #d9d0c0;
-    flex: 0 0 auto;
-  }
-  .prompt .cwd {
-    font: 12px/1 var(--mono);
-    color: var(--paper-mute);
-    flex: 0 0 auto;
-  }
-  .prompt .ps {
-    font: 600 13px/1 var(--mono);
-    color: var(--copper-deep);
-    flex: 0 0 auto;
-  }
-  #line {
-    flex: 1;
     min-width: 0;
-    border: none;
-    background: transparent;
-    color: var(--paper-ink);
-    font: 13px/1.4 var(--src);
-    padding: 4px 0;
+    padding: 10px 12px 8px;
   }
-  #line:focus { outline: none; }
-  #line::placeholder { color: #9a8f80; }
-  .prompt:focus-within {
-    box-shadow: inset 0 0 0 2px var(--copper);
-  }
+  #xterm .xterm { height: 100%; }
+  #xterm .xterm-viewport { overflow-y: auto !important; }
+  #xterm .xterm-screen { cursor: text; }
+  #xterm:focus-within { outline: none; }
 
   .gpanel {
     display: flex;
@@ -582,8 +546,8 @@ FORM: Operate instrument. FINISH: unreviewed and undocumented is unfinished.
 -->
 <header>
   <h1>Tacit <em id="title-em">graph</em></h1>
-  <span class="sub sub-graph">First-milestone Uiua subset · source → UIR → fire</span>
-  <span class="sub sub-console">names bind immutable values · | is a transform graph</span>
+  <span class="sub sub-graph">Uiua subset. Compile to UIR, then fire each node.</span>
+  <span class="sub sub-console">Store shell. | compiles to a transform graph.</span>
   <nav class="routes" aria-label="Views">
     <a href="/" data-route="/" id="nav-graph">graph</a>
     <a href="/console" data-route="/console" id="nav-console">console</a>
@@ -614,15 +578,15 @@ K ← /+ V</textarea>
     <button type="button" id="run" disabled>Compile and run</button>
     <div>
       <h2>Value</h2>
-      <div class="result" id="result"><span class="mute">Nothing has run yet.</span></div>
+      <div class="result" id="result"><span class="mute">No run yet.</span></div>
     </div>
     <details class="subset">
-      <summary>This is a subset, not all of Uiua</summary>
+      <summary>A subset of Uiua</summary>
       <ul>
-        <li>In: scalars, lists, matrices, bindings, <code>+ − × ÷ =</code>, <code>/+</code>, <code>↯ ⇌ ⧻ ⍏ ⍖ ⊏ ▽ ⊡</code>, <code>&amp;matmul</code> and the other <code>&amp;name</code> OS ops.</li>
-        <li>Out: files, sockets, threads, modifiers beyond the list, any unimplemented glyph. That is a compile error with a line number.</li>
-        <li>This page steps the graph in WASM. Engine tags (neon / sme / p-core) are the compiler’s placement, not silicon running here.</li>
-        <li>Fusion rewrites a single-consumer Add then Multiply into one AddMul so A+B is never stored.</li>
+        <li>Accepted: scalars, lists, matrices, bindings, <code>+ − × ÷ =</code>, <code>/+</code>, <code>↯ ⇌ ⧻ ⍏ ⍖ ⊏ ▽ ⊡</code>, <code>&amp;matmul</code> and the other <code>&amp;name</code> OS ops.</li>
+        <li>Rejected: files, sockets, threads, extra modifiers, any glyph not on that list. Compile error, with a line number.</li>
+        <li>This page steps the graph in WASM. Engine tags (neon / sme / p-core) are the compiler's placement, not silicon on this machine.</li>
+        <li>Fusion turns a single-consumer Add then Multiply into one AddMul. The sum is not written out.</li>
       </ul>
     </details>
   </section>
@@ -631,25 +595,25 @@ K ← /+ V</textarea>
     <div>
       <h2>How it ran</h2>
       <div class="pipeline" id="pipeline">
-        <div class="pipe" data-k="compile"><div class="who">Compile</div><div class="ms" id="ms-compile">·</div><i class="fill"></i></div>
-        <div class="pipe" data-k="fuse"><div class="who">Fuse</div><div class="ms" id="ms-fuse">·</div><i class="fill"></i></div>
-        <div class="pipe" data-k="fire"><div class="who">Fire</div><div class="ms" id="ms-fire">·</div><i class="fill"></i></div>
-        <div class="pipe" data-k="nodes"><div class="who">Nodes</div><div class="ms" id="ms-nodes">·</div><i class="fill"></i></div>
-        <div class="pipe" data-k="total"><div class="who">Wall</div><div class="ms" id="ms-total">·</div><i class="fill"></i></div>
+        <div class="pipe" data-k="compile"><div class="who">Compile</div><div class="ms" id="ms-compile">-</div><i class="fill"></i></div>
+        <div class="pipe" data-k="fuse"><div class="who">Fuse</div><div class="ms" id="ms-fuse">-</div><i class="fill"></i></div>
+        <div class="pipe" data-k="fire"><div class="who">Fire</div><div class="ms" id="ms-fire">-</div><i class="fill"></i></div>
+        <div class="pipe" data-k="nodes"><div class="who">Nodes</div><div class="ms" id="ms-nodes">-</div><i class="fill"></i></div>
+        <div class="pipe" data-k="total"><div class="who">Wall</div><div class="ms" id="ms-total">-</div><i class="fill"></i></div>
       </div>
     </div>
 
     <div class="tape-wrap">
-      <h2>Tape <span id="tape-sub">each cell is one node · width follows time</span>
+      <h2>Tape <span id="tape-sub">each cell is one node, width is time</span>
         <button type="button" class="replay" id="replay" hidden>Replay</button>
       </h2>
       <div class="tape" id="tape" aria-live="polite">
-        <div class="empty">Run a program. The tape is the computation in order, sized by how long each node took.</div>
+        <div class="empty">Run a program. Each cell is one node. Wider means it took longer.</div>
       </div>
     </div>
 
     <div class="graph-wrap" id="graph-wrap">
-      <div class="empty" id="graph-empty">The live graph appears here after compile. Bindings sit on the left; the last transform is on the right.</div>
+      <div class="empty" id="graph-empty">After compile, bindings are on the left and the last transform is on the right.</div>
     </div>
 
     <div class="inspector" id="inspector" hidden></div>
@@ -658,16 +622,11 @@ K ← /+ V</textarea>
 
 <main id="view-console" aria-label="Tacit console">
   <section class="term">
-    <div id="scroll" class="scroll" aria-live="polite"></div>
-    <form id="prompt" class="prompt" autocomplete="off">
-      <span class="cwd" id="cwd">/</span>
-      <span class="ps">tacit&gt;</span>
-      <input id="line" spellcheck="false" aria-label="Command" placeholder="pwd · cat numbers | parse | square | sum · graph">
-    </form>
+    <div id="xterm" role="application" aria-label="Tacit shell"></div>
   </section>
   <aside class="gpanel">
     <h2>Graph</h2>
-    <p class="why">The last command as a value-transform chain. No processes. No byte pipes.</p>
+    <p class="why">How the last command compiled.</p>
     <pre id="cgraph"></pre>
   </aside>
 </main>
@@ -717,7 +676,7 @@ function applyRoute(push) {
   document.body.classList.toggle('route-console', consoleOn);
   document.body.classList.toggle('route-graph', !consoleOn);
   document.getElementById('title-em').textContent = consoleOn ? 'console' : 'graph';
-  document.title = consoleOn ? 'Tacit: console' : 'Tacit: watch the graph fire';
+  document.title = consoleOn ? 'Tacit console' : 'Tacit graph';
   document.getElementById('nav-graph').href = appBase();
   document.getElementById('nav-console').href = appBase() + 'console';
   document.getElementById('nav-graph').setAttribute('aria-current', consoleOn ? 'false' : 'page');
@@ -730,15 +689,33 @@ function applyRoute(push) {
   }
   if (consoleOn) {
     refreshConsoleChrome();
-    const input = document.getElementById('line');
-    if (input) input.focus();
+    requestAnimationFrame(() => {
+      fitTerm();
+      if (term) term.focus();
+    });
   }
+}
+
+function loadAsset(href, kind) {
+  return new Promise((resolve, reject) => {
+    const el = kind === 'css'
+      ? Object.assign(document.createElement('link'), { rel: 'stylesheet', href })
+      : Object.assign(document.createElement('script'), { src: href });
+    el.onload = resolve;
+    el.onerror = () => reject(new Error('failed to load ' + href));
+    document.head.appendChild(el);
+  });
 }
 
 async function init() {
   applyRoute(false);
   try {
-    const resp = await fetch(appBase() + 'tacit_wasm.wasm?v=4');
+    await Promise.all([
+      loadAsset(appBase() + 'vendor/xterm/xterm.css', 'css'),
+      loadAsset(appBase() + 'vendor/xterm/xterm.js', 'js'),
+    ]);
+    await loadAsset(appBase() + 'vendor/xterm/addon-fit.js', 'js');
+    const resp = await fetch(appBase() + 'tacit_wasm.wasm?v=5');
     const { instance } = await WebAssembly.instantiate(await resp.arrayBuffer(), {});
     wasm = instance.exports;
     memory = wasm.memory;
@@ -763,51 +740,170 @@ function readStr(fn) {
 
 function refreshConsoleChrome() {
   if (!wasm) return;
-  document.getElementById('cwd').textContent = readStr('tacit_pwd') || '/';
   const g = readStr('tacit_graph');
   document.getElementById('cgraph').textContent = g && g !== 'no pipeline' ? g : '';
 }
 
-function bootConsole() {
-  const scroll = document.getElementById('scroll');
-  scroll.innerHTML = '<div class="hint">names bind immutable values.\n| compiles to a transform graph — no processes, no byte pipes.\n\ntry:\n  echo "1 2 3 4" &gt; numbers\n  cat numbers | parse | square | sum &gt; total\n  why total\n  explain total</div>';
-  refreshConsoleChrome();
-}
-
+let term = null;
+let termFit = null;
+let lineBuf = '';
 const cmdHist = [];
 let cmdIdx = -1;
 
-function appendScroll(cls, text) {
-  const scroll = document.getElementById('scroll');
-  const div = document.createElement('div');
-  div.className = cls;
-  div.textContent = text;
-  scroll.appendChild(div);
-  scroll.scrollTop = scroll.scrollHeight;
+function crlf(s) {
+  return String(s).replace(/\r?\n/g, '\r\n');
+}
+
+function termWrite(s) {
+  if (term) term.write(crlf(s));
+}
+
+function fitTerm() {
+  if (!termFit || !term) return;
+  try { termFit.fit(); } catch (_) {}
+}
+
+function writePrompt() {
+  const pwd = wasm ? (readStr('tacit_pwd') || '/') : '/';
+  termWrite('\r\n\x1b[2m' + pwd + '\x1b[0m \x1b[38;2;196;120;74mtacit>\x1b[0m ');
+  lineBuf = '';
+}
+
+function writeBanner() {
+  termWrite('\x1b[2mType a store command or a Uiua line.');
+  termWrite('\r\n\r\n  echo "1 2 3 4" > numbers');
+  termWrite('\r\n  cat numbers | parse | square | sum > total');
+  termWrite('\r\n  why total');
+  termWrite('\r\n  explain total\x1b[0m');
+}
+
+function replaceLine(next) {
+  if (lineBuf.length) term.write('\b \b'.repeat(lineBuf.length));
+  lineBuf = next;
+  if (lineBuf) term.write(lineBuf);
+}
+
+function bootConsole() {
+  if (typeof Terminal !== 'function') {
+    setStatus('xterm.js failed to load', 'err');
+    return;
+  }
+  if (!term) {
+    term = new Terminal({
+      cursorBlink: true,
+      cursorStyle: 'bar',
+      fontFamily: '"Azeret Mono", ui-monospace, monospace',
+      fontSize: 13,
+      lineHeight: 1.35,
+      letterSpacing: 0,
+      theme: {
+        background: '#141210',
+        foreground: '#ebe4d6',
+        cursor: '#c4784a',
+        cursorAccent: '#141210',
+        selectionBackground: '#3a342c',
+        black: '#141210',
+        red: '#c45c42',
+        green: '#3f7a68',
+        yellow: '#c9a25a',
+        blue: '#4a6b8a',
+        magenta: '#7a6b8f',
+        cyan: '#3f7a68',
+        white: '#ebe4d6',
+        brightBlack: '#9a9184',
+        brightRed: '#c4784a',
+        brightGreen: '#5a9a84',
+        brightYellow: '#c9a25a',
+        brightBlue: '#4a6b8a',
+        brightMagenta: '#7a6b8f',
+        brightCyan: '#5a9a84',
+        brightWhite: '#f3ece0'
+      }
+    });
+    const Fit = (typeof FitAddon === 'function') ? FitAddon : (FitAddon && FitAddon.FitAddon);
+    if (Fit) {
+      termFit = new Fit();
+      term.loadAddon(termFit);
+    }
+    term.open(document.getElementById('xterm'));
+    term.onData(onTermData);
+    window.addEventListener('resize', fitTerm);
+    new ResizeObserver(fitTerm).observe(document.getElementById('xterm'));
+  }
+  term.reset();
+  writeBanner();
+  writePrompt();
+  fitTerm();
+  refreshConsoleChrome();
+  if (isConsoleRoute()) term.focus();
+}
+
+function onTermData(data) {
+  if (data === '\r') {
+    const src = lineBuf;
+    lineBuf = '';
+    runConsoleLine(src);
+    return;
+  }
+  if (data === '\u007f') {
+    if (lineBuf.length) {
+      lineBuf = lineBuf.slice(0, -1);
+      term.write('\b \b');
+    }
+    return;
+  }
+  if (data === '\u0003') {
+    termWrite('^C');
+    writePrompt();
+    return;
+  }
+  if (data === '\u001b[A') {
+    if (!cmdHist.length) return;
+    cmdIdx = Math.max(0, cmdIdx - 1);
+    replaceLine(cmdHist[cmdIdx]);
+    return;
+  }
+  if (data === '\u001b[B') {
+    if (cmdIdx < cmdHist.length - 1) {
+      cmdIdx += 1;
+      replaceLine(cmdHist[cmdIdx]);
+    } else {
+      cmdIdx = cmdHist.length;
+      replaceLine('');
+    }
+    return;
+  }
+  if (data === '\t' || data.charCodeAt(0) < 32) return;
+  lineBuf += data;
+  term.write(data);
 }
 
 function runConsoleLine(src) {
   if (!wasm) {
-    appendScroll('err', 'wasm not ready');
+    termWrite('\r\n\x1b[31mwasm not ready\x1b[0m');
+    writePrompt();
     return;
   }
   src = src.trim();
-  if (!src) return;
+  if (!src) {
+    writePrompt();
+    return;
+  }
   cmdHist.push(src);
   cmdIdx = cmdHist.length;
-  appendScroll('cmd', 'tacit> ' + src);
   const out = call('tacit_eval', enc.encode(src));
   if (!out) {
-    appendScroll('err', lastError() || 'error');
+    termWrite('\r\n\x1b[31m' + (lastError() || 'error') + '\x1b[0m');
   } else {
     const text = dec.decode(out.subarray(1));
     if (text === '\f') {
       bootConsole();
-    } else if (text) {
-      appendScroll('out', text);
+      return;
     }
+    if (text) termWrite('\r\n' + text);
   }
   refreshConsoleChrome();
+  writePrompt();
 }
 
 function setStatus(text, cls) {
@@ -846,7 +942,7 @@ function lastError() {
 }
 
 function fmtTime(ms) {
-  if (ms == null || Number.isNaN(ms)) return '·';
+  if (ms == null || Number.isNaN(ms)) return '-';
   if (ms < 0.05) return '<0.05 ms';
   if (ms < 1000) return ms.toFixed(ms < 10 ? 2 : 1) + ' ms';
   return (ms / 1000).toFixed(2) + ' s';
@@ -971,7 +1067,7 @@ function didStory(step) {
     case 15: return 'Counted the leading axis of ' + (ins[0]||'input') + '.';
     case 31: return 'Row indices that sort ' + (ins[0]||'input') + ' ascending.';
     case 32: return 'Row indices that sort ' + (ins[0]||'input') + ' descending.';
-    case 33: return 'Select rows. Inputs: ' + (ins.join(', ') || '—') + ' → ' + sh + '.';
+    case 33: return 'Select rows. Inputs: ' + (ins.join(', ') || '-') + ' → ' + sh + '.';
     case 34: return 'Kept rows of ' + (ins[0]||'data') + ' where the mask is nonzero.';
     case 35: return 'Picked one row/column of ' + (ins[0]||'data') + '.';
     case 36: return 'Elementwise equals → i64 0/1 mask ' + sh + '.';
@@ -1004,7 +1100,7 @@ function nodeTitle(op, name) {
   const opName = OP[op] || '?';
   const n = (name || '').trim();
   if (!n || n.toLowerCase() === opName.toLowerCase()) return opName;
-  return opName + ' · ' + n;
+  return opName + ' ' + n;
 }
 
 function renderGraph(nodes, activeId) {
@@ -1033,7 +1129,7 @@ function renderGraph(nodes, activeId) {
     const color = KIND_COLOR[kindOf(n.op)];
     const on = activeId === n.id ? ' on' : '';
     const label = nodeTitle(n.op, n.name);
-    const sub = `${shapeStr(n.rank, n.shape)} · ${ENGINE[n.engine] || '?'}`;
+    const sub = `${shapeStr(n.rank, n.shape)}, ${ENGINE[n.engine] || '?'}`;
     const clip = 'clip-n' + n.id;
     s += `<g class="node${on}" data-id="${n.id}" transform="translate(${x},${y})" style="cursor:pointer">`;
     s += `<clipPath id="${clip}"><rect width="${boxW}" height="${boxH}" rx="6"/></clipPath>`;
@@ -1041,7 +1137,7 @@ function renderGraph(nodes, activeId) {
     s += `<g clip-path="url(#${clip})">`;
     s += `<text class="op" x="10" y="22">${esc(label)}</text>`;
     s += `<text class="sub" x="10" y="40">${esc(sub)}</text>`;
-    s += `<text class="sub" x="10" y="56">${DTYPE[n.dtype] || '?'}${n.pure ? ' · pure' : ''}</text>`;
+    s += `<text class="sub" x="10" y="56">${DTYPE[n.dtype] || '?'}${n.pure ? ', pure' : ''}</text>`;
     s += `</g>`;
     s += `<title>${esc(label)}</title>`;
     s += `</g>`;
@@ -1060,10 +1156,10 @@ function setPipeline(times) {
   const labels = {
     compile: fmtTime(times.compile),
     fuse: times.dropped
-      ? fmtTime(times.fuse) + ' · −' + times.dropped + ' node'
+      ? fmtTime(times.fuse) + ', dropped ' + times.dropped + ' node'
       : fmtTime(times.fuse),
     fire: fmtTime(times.fire),
-    nodes: times.nodes != null ? times.nodes + (times.nodes === 1 ? ' node' : ' nodes') : '·',
+    nodes: times.nodes != null ? times.nodes + (times.nodes === 1 ? ' node' : ' nodes') : '-',
     total: fmtTime(times.total)
   };
   const shares = {
@@ -1084,13 +1180,13 @@ function setPipeline(times) {
 function renderTape(steps, activeId) {
   const tape = document.getElementById('tape');
   if (!steps.length) {
-    tape.innerHTML = '<div class="empty">Run a program. The tape is the computation in order, sized by how long each node took.</div>';
+    tape.innerHTML = '<div class="empty">Run a program. Each cell is one node. Wider means it took longer.</div>';
     return;
   }
   const max = Math.max(...steps.map(s => s.ms), 0.001);
   const total = steps.reduce((a, s) => a + s.ms, 0);
   document.getElementById('tape-sub').textContent =
-    steps.length + ' fires · ' + fmtTime(total) + ' in the stepper';
+    steps.length + ' fires, ' + fmtTime(total) + ' in the stepper';
   tape.innerHTML = steps.map(s => {
     const share = s.ms / max;
     const on = activeId === s.id ? ' on' : '';
@@ -1137,7 +1233,7 @@ function showInspector(step, offset) {
         : '<span class="insp-did">no inputs</span>'}</div>
       <div class="facts">
         <div><span class="k">id</span> ${step.id}</div>
-        <div><span class="k">time</span> ${fmtTime(step.ms)} · ${pct}%</div>
+        <div><span class="k">time</span> ${fmtTime(step.ms)}, ${pct}%</div>
         <div><span class="k">engine</span> ${esc(ENGINE[step.engine]||'?')}</div>
         <div><span class="k">home</span> ${esc(HOME[step.home]||'uma')}</div>
         <div><span class="k">pure</span> ${step.pure ? 'yes' : 'no'}</div>
@@ -1147,12 +1243,12 @@ function showInspector(step, offset) {
         <div><span class="k">min</span> ${fmtNum(step.vmin)}</div>
         <div><span class="k">max</span> ${fmtNum(step.vmax)}</div>
         <div><span class="k">mean</span> ${fmtNum(mean)}</div>
-        <div><span class="k">hash</span> ${step.checksum != null ? BigInt(step.checksum).toString(16).slice(-8) : '·'}</div>
+        <div><span class="k">hash</span> ${step.checksum != null ? BigInt(step.checksum).toString(16).slice(-8) : '-'}</div>
       </div>
     </div>
     <div class="insp-value">
       <div class="insp-bar">
-        <span>${DTYPE[step.dtype]} ${esc(shapeStr(step.rank, step.shape))} · ${elems.toLocaleString()} elems · ${from}–${to}</span>
+        <span>${DTYPE[step.dtype]} ${esc(shapeStr(step.rank, step.shape))}, ${elems.toLocaleString()} elems, ${from}-${to}</span>
         <span>
           <button type="button" id="peek-prev" ${offset<=0?'disabled':''}>prev</button>
           <button type="button" id="peek-next" ${offset+PAGE>=elems?'disabled':''}>next</button>
@@ -1171,7 +1267,7 @@ function showInspector(step, offset) {
 }
 
 function fmtNum(x) {
-  if (x == null || Number.isNaN(x)) return '·';
+  if (x == null || Number.isNaN(x)) return '-';
   if (Math.abs(x) >= 1e6 || (Math.abs(x) < 1e-4 && x !== 0)) return x.toExponential(3);
   return (Math.round(x * 1e4) / 1e4).toString();
 }
@@ -1319,7 +1415,7 @@ async function run() {
       rec.ms = s1 - s0;
       steps.push(rec);
       if (s1 - lastPaint > 40) {
-        result.innerHTML = '<span class="mute">firing ' + steps.length + ' / ' + loaded + ' · ' + esc(OP[rec.op]||'') + '</span>';
+        result.innerHTML = '<span class="mute">firing ' + steps.length + ' / ' + loaded + ', ' + esc(OP[rec.op]||'') + '</span>';
         renderTape(steps, rec.id);
         await new Promise(r => requestAnimationFrame(r));
         lastPaint = performance.now();
@@ -1344,7 +1440,7 @@ async function run() {
       const last = steps[steps.length-1];
       result.innerHTML = '<span class="ok">last value</span>\n'
         + DTYPE[info.dtype] + ' ' + shapeStr(info.rank, info.shape)
-        + ' · ' + fmtBytes(info.bytes) + '\n'
+        + ', ' + fmtBytes(info.bytes) + '\n'
         + '[' + info.vals.join(', ') + (info.elems > info.vals.length ? ', …' : '') + ']'
         + (last ? '\nmin '+fmtNum(last.vmin)+'  max '+fmtNum(last.vmax) : '');
       result.style.cursor = 'pointer';
@@ -1429,31 +1525,6 @@ document.querySelectorAll('.routes a').forEach(a => {
   });
 });
 window.addEventListener('popstate', () => applyRoute(false));
-
-document.getElementById('prompt').addEventListener('submit', e => {
-  e.preventDefault();
-  const input = document.getElementById('line');
-  const src = input.value;
-  input.value = '';
-  runConsoleLine(src);
-});
-document.getElementById('line').addEventListener('keydown', e => {
-  if (e.key === 'ArrowUp') {
-    e.preventDefault();
-    if (!cmdHist.length) return;
-    cmdIdx = Math.max(0, cmdIdx - 1);
-    e.target.value = cmdHist[cmdIdx];
-  } else if (e.key === 'ArrowDown') {
-    e.preventDefault();
-    if (cmdIdx < cmdHist.length - 1) {
-      cmdIdx += 1;
-      e.target.value = cmdHist[cmdIdx];
-    } else {
-      cmdIdx = cmdHist.length;
-      e.target.value = '';
-    }
-  }
-});
 init();
 </script>
 </body>
