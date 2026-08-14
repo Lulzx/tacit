@@ -251,6 +251,14 @@ impl Encoder {
         self.w.buf[8..12].copy_from_slice(&self.count.to_le_bytes());
         self.w.buf
     }
+
+    /// Snapshot the encoded program so far without consuming the encoder
+    /// (used by the in-guest shell to compile one line at a time).
+    pub fn snapshot(&self) -> alloc::vec::Vec<u8> {
+        let mut b = self.w.buf.clone();
+        b[8..12].copy_from_slice(&self.count.to_le_bytes());
+        b
+    }
 }
 
 /// A fully-decoded program that owns its data.

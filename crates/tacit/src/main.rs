@@ -13,6 +13,7 @@ mod kernel;
 mod machine;
 mod mem;
 mod mmu;
+mod shell;
 mod stepper;
 mod uart;
 
@@ -32,7 +33,6 @@ static GRAPH_UIR: &[u8] = include_bytes!("../embedded/graph.uir");
 static PROVENANCE_UIR: &[u8] = include_bytes!("../embedded/provenance.uir");
 static BENCH_SEND_UIR: &[u8] = include_bytes!("../embedded/bench-send.uir");
 static POLICY_UIR: &[u8] = include_bytes!("../embedded/policy.uir");
-static ECHO_UIR: &[u8] = include_bytes!("../embedded/echo.uir");
 static BENCH_FUSED_UIR: &[u8] = include_bytes!("../embedded/bench-fused.uir");
 static BENCH_UNFUSED_UIR: &[u8] = include_bytes!("../embedded/bench-unfused.uir");
 
@@ -47,7 +47,6 @@ static mut GRAPH: Option<Program> = None;
 static mut PROVENANCE: Option<Program> = None;
 static mut BENCH_SEND: Option<Program> = None;
 static mut POLICY: Option<Program> = None;
-static mut ECHO: Option<Program> = None;
 static mut BENCH_FUSED: Option<Program> = None;
 static mut BENCH_UNFUSED: Option<Program> = None;
 
@@ -163,7 +162,6 @@ pub extern "C" fn kernel_main(fdt_ptr: usize) -> ! {
         PROVENANCE = Some(uir::decode(PROVENANCE_UIR).unwrap());
         BENCH_SEND = Some(uir::decode(BENCH_SEND_UIR).unwrap());
         POLICY = Some(uir::decode(POLICY_UIR).unwrap());
-        ECHO = Some(uir::decode(ECHO_UIR).unwrap());
         BENCH_FUSED = Some(uir::decode(BENCH_FUSED_UIR).unwrap());
         BENCH_UNFUSED = Some(uir::decode(BENCH_UNFUSED_UIR).unwrap());
     }
@@ -223,14 +221,14 @@ pub extern "C" fn kernel_main(fdt_ptr: usize) -> ! {
     console_write_str("\n");
 
     // =======================================================================
-    // Keyboard -> event array -> character line (echo)
+    // Keyboard -> Uiua shell.  The guest compiles and steps typed Uiua lines
+    // itself (same compiler source as the host), so bindings persist as
+    // values and there is no fixed echo program.
     // =======================================================================
-    console_write_str("--- keyboard ---\n");
-    console_write_str("type a line and press Enter:\n");
+    console_write_str("\n--- Uiua shell ---\n");
+    console_write_str("type Uiua lines; bindings persist as values.\n");
     enable_irqs();
-    loop {
-        run_uir("echo", prog!(ECHO), None, None);
-    }
+    shell::run();
 }
 
 // ---------------------------------------------------------------------------

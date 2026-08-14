@@ -34,7 +34,7 @@ Boots the image under QEMU `aarch64` virt with **HVF** on this Mac (TCG is
 the documented fallback when HVF is unavailable), `-m 1G`, a single boot CPU,
 a ramfb framebuffer, and the serial console on stdio. Keyboard input arrives
 over the serial console (the documented QEMU default) and is delivered to the
-guest as an event array; type a line and press Enter to see it echoed.
+guest as an event array.
 
 After the ready banner the guest, unattended:
 
@@ -61,3 +61,28 @@ Add-then-Multiply runs as one NEON entry. `&stats` reports a per-engine
 breakdown (e.g. `kernel entries: 1 (neon 1)` for the fused bench). This is
 speed-stack level 6 — engines as placements of the same node — in its first
 slice; SME, GPU, and ANE stay named-but-offline engines.
+
+## Uiua shell
+
+After the benches the guest drops into an interactive **Uiua shell**: the
+guest compiles each typed line to UIR itself, using the *same* compiler
+source as the host (`crates/compile`), and steps it on the boot CPU.
+Bindings are values — `A ← [1 2 3]` snapshots the result, so later lines
+can reference `A` as a constant.
+
+```text
+uiua> × 2 3
+[6]
+uiua> A ← [1 2 3]
+uiua> × 2 A
+[2 4 6]
+uiua> /+ A
+[6]
+uiua> ⧻ A
+[3]
+```
+
+Glyphs (`×`, `↯`, `←`, `¯`, `⍏`, …) arrive over the serial line as UTF-8 and
+are decoded by the reader; any out-of-subset construct is rejected with a
+compile error and a source location, and a runtime error leaves the shell
+running (no reset loop).

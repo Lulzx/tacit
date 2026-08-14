@@ -57,7 +57,9 @@ pub fn read_line() -> alloc::vec::Vec<u8> {
                 line.pop();
                 continue;
             }
-            if ch >= 0x20 && ch < 0x7f {
+            if ch >= 0x20 {
+                // printable (ASCII) or a UTF-8 byte of a Uiua glyph such as
+                // `×`, `↯`, or `←`; the reader decodes the byte string later
                 line.push(ch);
             }
         } else {

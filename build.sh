@@ -40,7 +40,6 @@ echo "-- compiling Uiua subset to UIR"
 "$HC" --no-fuse -o "$EMB/graph.uir"    uiua/graph.ua
 "$HC" --no-fuse -o "$EMB/provenance.uir" uiua/provenance.ua
 "$HC" --no-fuse -o "$EMB/bench-send.uir" uiua/bench-send.ua
-"$HC" --no-fuse -o "$EMB/echo.uir"     uiua/echo.ua
 "$HC" --no-fuse -o "$EMB/policy.uir"   "uiua/$POLICY"
 "$HC" --fuse    -o "$EMB/bench-fused.uir"   uiua/bench-fusion.ua
 "$HC" --no-fuse -o "$EMB/bench-unfused.uir" uiua/bench-fusion.ua
@@ -57,9 +56,21 @@ if [ -x "$OBJCOPY" ]; then
   "$OBJCOPY" -O binary target/aarch64-unknown-none/release/tacit build/tacit.img
 fi
 
-echo "-- image contract check (no POSIX file path, no listen/accept, no Metal)"
-if strings build/tacit.elf 2>/dev/null | grep -qiE "listen|accept\(|/etc/|/usr/|/bin/|posix|fork\(|mtlcommand|mtldevice|coreml|cuda"; then
-  echo "build: image contains a forbidden kernel-service symbol (POSIX/Metal/network path)" >&2
+echo "-- image contract check (no POSIX/Metal/network service symbols, no file paths)"
+# The guest now contains the compiler (for the Uiua shell), whose rejection
+# vocabulary legitimately includes the words `listen`, `cuda`, `coreml`, and
+# so on as error text.  The invariant is about *service machinery*, so the
+# symbol table is what we scan; only path literals are still checked in raw
+# strings because nothing should ever embed a POSIX path.
+OBJTOOLS="$(rustc --print sysroot)/lib/rustlib/aarch64-apple-darwin/bin"
+if [ -x "$OBJTOOLS/llvm-nm" ]; then
+  if "$OBJTOOLS/llvm-nm" build/tacit.elf 2>/dev/null | grep -qiE "listen|accept|posix|fork|mtlcommand|mtldevice|coreml|cuda"; then
+    echo "build: image contains a forbidden kernel-service symbol (POSIX/Metal/network path)" >&2
+    exit 1
+  fi
+fi
+if strings build/tacit.elf 2>/dev/null | grep -qiE "/etc/|/usr/|/bin/"; then
+  echo "build: image contains a POSIX file path" >&2
   exit 1
 fi
 
