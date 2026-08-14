@@ -1,16 +1,16 @@
 ## Purpose
 
-Defines what Stride believes computation is: a graph of array transformations the system can still see, not opaque processes the kernel virtualizes.
+Defines what Tacit believes computation is: a graph of array transformations the system can still see, not opaque processes the kernel virtualizes.
 
 ## ADDED Requirements
 
-### Requirement: Stride equation
+### Requirement: Tacit equation
 The system MUST implement `OS = values + transformations + capabilities + placement`. It MUST NOT implement `OS = processes + threads + files + syscalls` as its programming model.
 
 #### Scenario: Named worldview
 - **GIVEN** project documentation and the first-milestone image
 - **WHEN** an operator asks what the OS is
-- **THEN** the documented name is Stride
+- **THEN** the documented name is Tacit
 - **AND** the documented worldview is that everything is an array transformation
 
 #### Scenario: Unix objects are absent
@@ -84,7 +84,7 @@ The running system MUST execute with no Linux, macOS, Windows, or other general-
 - **GIVEN** a built system image
 - **WHEN** the image is started under QEMU using the project's documented command
 - **THEN** the guest does not boot a Linux, macOS, or Windows kernel
-- **AND** the first user-visible output is produced by Stride
+- **AND** the first user-visible output is produced by Tacit
 
 #### Scenario: Hosted interpreter is not the runtime
 - **GIVEN** the official hosted Uiua interpreter
@@ -116,7 +116,7 @@ Given the same input values and the same capability responses, a Realm MUST prod
 - **AND** they are not implicit global side channels
 
 ### Requirement: Self-hosting is not blocked
-The architecture MUST allow a later system in which a Uiua compiler written in Uiua runs on Stride and the scheduler remains a Uiua transform. The first milestone MUST NOT require that compiler.
+The architecture MUST allow a later system in which a Uiua compiler written in Uiua runs on Tacit and the scheduler remains a Uiua transform. The first milestone MUST NOT require that compiler.
 
 #### Scenario: First milestone uses a host compiler
 - **GIVEN** the first-milestone build

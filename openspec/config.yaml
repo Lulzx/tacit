@@ -1,7 +1,7 @@
 schema: spec-driven
 
 context: |
-  Project: Stride (repo: uiua-os). An array-transformation operating system.
+  Project: Tacit (repo: uiua-os). An array-transformation operating system.
   A research operating system whose model comes from Uiua
   (https://www.uiua.org/), a tacit array language. Official Uiua 0.14+
   uses a tree-based compiler, not bytecode. Do not embed the hosted
@@ -9,7 +9,7 @@ context: |
 
   Equation: OS = values + transformations + capabilities + placement.
   Not: processes + threads + files + syscalls.
-  One sentence: Linux virtualizes a computer for processes; Stride
+  One sentence: Linux virtualizes a computer for processes; Tacit
   virtualizes the computer as an array-transformation machine.
   Research test: one Uiua program, discovered dependencies, zero-copy
   immutable sharing, placement across cores/SIMD/GPU — no threads, locks,

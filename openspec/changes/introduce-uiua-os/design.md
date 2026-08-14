@@ -4,7 +4,7 @@ Greenfield. See `proposal.md` for why and the nine delta specs for the contract.
 
 The difference is not “Linux is C, this is Uiua.” Linux believes computation is **opaque programs on a virtual computer**: process, address space, threads, file descriptors, syscalls. By the time the kernel runs `C = (A + B) × D`, it sees loads, stores, and a thread. The fact that Add is elementwise, that millions of elements are independent, that Multiply consumes Add, that the work could live on a GPU — that meaning is already gone.
 
-Stride believes computation is a **graph the system still understands**:
+Tacit believes computation is a **graph the system still understands**:
 
 ```text
 A ──┐
@@ -13,7 +13,7 @@ B ──┘        ├─ Multiply ──> C
 D ───────────┘
 ```
 
-Compiler, runtime, and scheduler share that graph. Linux's opacity is why it can run COBOL and Chrome. Stride gives that up on purpose: it participates in the computation.
+Compiler, runtime, and scheduler share that graph. Linux's opacity is why it can run COBOL and Chrome. Tacit gives that up on purpose: it participates in the computation.
 
 C maps onto hardware; Uiua maps onto arrays. Official Uiua 0.14 is tree-based, not bytecode, and its hosted runtime assumes an OS. Do not link that runtime into ring 0.
 
@@ -21,7 +21,7 @@ C maps onto hardware; Uiua maps onto arrays. Official Uiua 0.14 is tree-based, n
 
 **Goals:**
 
-- Name the system **Stride** and make `values + transformations + capabilities + placement` the actual architecture.
+- Name the system **Tacit** and make `values + transformations + capabilities + placement` the actual architecture.
 - Keep semantic UIR long enough that the scheduler places **transforms**, not threads.
 - First QEMU milestone: a **unikernel-style** image — console, allocator, keyboard, one Realm, one tiny program whose graph is still inspectable. No general FS, TCP, or process table.
 - Leave a straight path to the research test (zero-copy + multi-core/SIMD/GPU placement from one program) without building GPU or Unix compat now.
@@ -54,7 +54,7 @@ The ABI is an **operation array** in and a **result array** out. Crossing into t
 
 ### Decision: What Linux asks vs what this OS asks
 
-| Linux | Stride |
+| Linux | Tacit |
 | --- | --- |
 | Which thread runs on this CPU? | Which ready transform runs, on what hardware? |
 | Programmer or runtime spawns workers | Elementwise/`rows` already *is* the parallelism |
@@ -70,7 +70,7 @@ The ABI is an **operation array** in and a **result array** out. Crossing into t
 | Mutable named files | Later: content-addressed values |
 
 Linux says: I manage hardware for arbitrary opaque programs.  
-Stride says: I understand the structure of computation well enough to help execute it.
+Tacit says: I understand the structure of computation well enough to help execute it.
 
 That is a tradeoff, not a slogan. Generality is the cost.
 

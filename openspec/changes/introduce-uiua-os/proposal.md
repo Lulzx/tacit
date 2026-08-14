@@ -2,17 +2,17 @@
 
 Uiua thinks in arrays and tacit transformations. A Unix kernel whose source happens to be Uiua would waste that. Official Uiua already moved from bytecode to a tree-based compiler, and its hosted system APIs assume an OS underneath. The interesting design is an OS whose objects are **values, transformations, capabilities, and placement**.
 
-**Thesis:** Linux virtualizes a computer for processes. Stride virtualizes the computer as an array-transformation machine. The difference is what the OS believes computation *is*, not which language the kernel is written in.
+**Thesis:** Linux virtualizes a computer for processes. Tacit virtualizes the computer as an array-transformation machine. The difference is what the OS believes computation *is*, not which language the kernel is written in.
 
 `OS = values + transformations + capabilities + placement`, not `processes + threads + files + syscalls`.
 
 **Research test (not Unix compat):** a nontrivial Uiua program expresses computation once; the OS discovers dependencies, shares immutable data zero-copy, and places work across cores / SIMD / GPU without threads, locks, explicit GPU dispatch, or byte-stream IPC.
 
-Name: **Stride**. Language: Uiua. IR: UIR.
+Name: **Tacit**. Language: Uiua. IR: UIR.
 
 ## What Changes
 
-- Define **Stride** as a freestanding system: Uiua → **UIR** (project IR) → native/stepped code → QEMU, with **no Linux or macOS in the guest**.
+- Define **Tacit** as a freestanding system: Uiua → **UIR** (project IR) → native/stepped code → QEMU, with **no Linux or macOS in the guest**.
 - Keep a **tiny microkernel** (about 10–15 operations). No kernel filesystem, TCP, POSIX, `fork`, or `ioctl`.
 - Cross the kernel as an **operation array**, not C-shaped syscalls. The kernel may batch, reorder, or fuse ops the dependency graph allows.
 - The executable object is a **Transform** `T : A → B` with shape, effects, dependencies, capabilities, and placement — not a thread.

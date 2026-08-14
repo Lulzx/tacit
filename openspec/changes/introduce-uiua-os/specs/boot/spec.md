@@ -25,7 +25,7 @@ Early boot MUST do only architecture bring-up: page tables if required, a kernel
 #### Scenario: Ready banner from the initial Realm
 - **GIVEN** QEMU has just started the image
 - **WHEN** boot completes
-- **THEN** the display shows a fixed ready banner that includes the name Stride
+- **THEN** the display shows a fixed ready banner that includes the name Tacit
 - **AND** an initial Realm is running
 - **AND** the system can start the bundled tiny program or accept keyboard events, as documented
 

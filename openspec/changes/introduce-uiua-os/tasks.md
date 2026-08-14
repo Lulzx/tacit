@@ -2,7 +2,7 @@
 
 - [ ] 1.1 Add a `no_std` microkernel crate, Limine (or equivalent) config, and a documented `build` command that emits an x86_64 image
 - [ ] 1.2 Add a documented `qemu` command that boots that image with no guest Linux/macOS
-- [ ] 1.3 Reach a halt-safe ready banner that names Stride, with one initial Realm
+- [ ] 1.3 Reach a halt-safe ready banner that names Tacit, with one initial Realm
 - [ ] 1.4 On missing memory map or display init failure, halt with a distinct diagnostic instead of a silent hang
 
 ## 2. Machine: console, memory, keyboard, events
