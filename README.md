@@ -33,10 +33,12 @@ transform summarizes the live graph. Pure elementwise work is placed on the
 entries), and `&matmul` runs on the **SME engine** (streaming mode, probe-
 gated). Capability tokens are **PACGA-signed** under a kernel-only key when
 FEAT_PACGA is present. Fusion (`fused bytes < unfused`) and zero-copy send
-benches print in-image counters. After the benches the guest drops into an
-interactive **Uiua shell**: it compiles typed Uiua lines to UIR in-guest (the
-same `crates/compile` source the host uses — the start of the self-hosted
-compiler) and steps them, so bindings persist as values.
+benches print in-image counters. After the benches the guest runs a scripted
+**store + shell** session (immutable blobs, mutable name bindings, history,
+undo) and drops into an interactive **Tacit shell**: bash-shaped commands are
+sugar over the content-addressed namespace; typed Uiua still compiles to UIR
+in-guest (the same `crates/compile` source the host uses) so bindings persist
+as values. The same shell is on the web app at `/console`.
 
 ## Laws
 

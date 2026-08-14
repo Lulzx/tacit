@@ -63,7 +63,9 @@ After the ready banner the guest, unattended:
    the per-engine entries for `&matmul`),
 9. verifies the **self-hosted compiler**: the guest re-compiles every
    bundled Uiua source (embedded as text) and must produce byte-identical
-   UIR to the host-compiled payloads it runs.
+   UIR to the host-compiled payloads it runs,
+10. runs a scripted **store + shell** session (mkdir, echo, history, undo)
+    and then drops into the interactive Tacit shell.
 
 Pure elementwise nodes are placed on the **NEON engine**: the stepper
 dispatches `engine = neon` to a 128-bit Advanced-SIMD kernel, and the fused
@@ -88,13 +90,60 @@ and the kernel self-test prints `capability tokens: PACGA-signed (pacga)`.
 When FEAT_PACGA is absent the kernel falls back to software unforgeability
 (random table tokens), so the capability spec does not change.
 
-## Uiua shell
+## Store and Tacit shell
 
-After the benches the guest drops into an interactive **Uiua shell**: the
-guest compiles each typed line to UIR itself, using the *same* compiler
-source as the host (`crates/compile`), and steps it on the boot CPU.
-Bindings are values — `A ← [1 2 3]` snapshots the result, so later lines
-can reference `A` as a constant.
+After the benches the guest inits a **content-addressed namespace** (blobs
+and trees, names as refs) and runs a scripted session:
+
+```text
+tacit> pwd
+/
+tacit> mkdir home
+tacit> cd home
+tacit> echo "hello tacit" > hello.txt
+tacit> ls
+hello.txt
+tacit> cat hello.txt
+hello tacit
+tacit> history hello.txt
+1  create  ........
+tacit> echo "hello world" > hello.txt
+tacit> undo hello.txt
+tacit> cat hello.txt
+hello tacit
+```
+
+Data is immutable. A write is a new value plus an atomic name update, so
+history and undo are Ref operations, not sector rewrites. There is no
+`open`, `fd`, or `seek`.
+
+Then the guest drops into an interactive **Tacit shell** (`tacit>`). Familiar
+commands (`pwd`, `ls`, `cd`, `cat`, `echo`, `mkdir`, `cp`, `mv`, `rm`,
+`history`, `undo`, `inspect`, `graph`, `clear`) are sugar for transforms
+over the current tree capability. A line that is not a store command is
+compiled to UIR with the *same* compiler source as the host
+(`crates/compile`) and stepped on the boot CPU. Bindings are values —
+`A ← [1 2 3]` snapshots the result, so later lines can reference `A` as a
+constant.
+
+`graph` prints the last command as a value-transform chain (not a process
+pipeline). A `|` line is that graph, not a byte pipe:
+
+```text
+tacit> echo "1 2 3 4" > numbers
+tacit> cat numbers | parse | square | sum
+30
+tacit> graph
+numbers
+  |
+ Parse
+  |
+ Square
+  |
+ Sum
+```
+
+The same shell runs in the browser at `/console` (`python3 wasm/serve.py`).
 
 Before the shell, the boot runs the **self-hosted compiler check**: the
 guest re-compiles every bundled Uiua source (embedded as text) and requires
@@ -102,14 +151,14 @@ byte-identical UIR to the host-compiled payload it already runs.  Same
 sources, new host.
 
 ```text
-uiua> × 2 3
+tacit> × 2 3
 [6]
-uiua> A ← [1 2 3]
-uiua> × 2 A
+tacit> A ← [1 2 3]
+tacit> × 2 A
 [2 4 6]
-uiua> /+ A
+tacit> /+ A
 [6]
-uiua> ⧻ A
+tacit> ⧻ A
 [3]
 ```
 

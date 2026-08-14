@@ -3,6 +3,7 @@ resolver = "2"
 members = [
     "crates/uir",
     "crates/compile",
+    "crates/store",
     "crates/tacit",
     "crates/hostc",
 ]

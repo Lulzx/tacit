@@ -22,7 +22,7 @@ Unix objects and Metal/CUDA objects are derived from these five or refused.
 | --- | --- | --- |
 | process, `fork`, `exec` | a Realm (heap + transforms + cap table + quota) | derived |
 | thread, `pthread`, `clone` | independent transforms; readiness is the sync | derived |
-| file, fd, `open/read/seek/write/close` | a value/region + a capability | derived (later) |
+| file, fd, `open/read/seek/write/close` | an immutable value + a mutable name binding + a tree capability | derived |
 | pipe, socket, byte-stream IPC | an edge carrying a value or a region capability | derived |
 | `ps`, `top`, `strace`, `lsof`, `/proc` | projections of the live graph | derived |
 | `chmod`, UID/GID ambient authority | grant / revoke / narrow; born with `{}` | derived |

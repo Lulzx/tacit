@@ -9,6 +9,7 @@ use std::cell::RefCell;
 
 use compile::{compile_file, fuse};
 
+mod console;
 mod stepper;
 
 thread_local! {
@@ -322,4 +323,57 @@ pub extern "C" fn uiua_graph(uir_ptr: *const u8, uir_len: usize, out_len: *mut u
         out.extend_from_slice(&nd.in2.to_le_bytes());
     }
     leak_vec(out, out_len)
+}
+
+/// Evaluate one Tacit-shell line against the persistent store session.
+/// Store commands and `|` pipelines run in the namespace; anything else is
+/// compiled as Uiua.  Returns UTF-8 output, or null on error.
+#[no_mangle]
+pub extern "C" fn tacit_eval(src_ptr: *const u8, src_len: usize, out_len: *mut usize) -> *mut u8 {
+    if src_ptr.is_null() || out_len.is_null() {
+        return std::ptr::null_mut();
+    }
+    let src = unsafe { std::slice::from_raw_parts(src_ptr, src_len) };
+    let src = String::from_utf8_lossy(src);
+    match console::eval(&src) {
+        Ok(s) => {
+            clear_err();
+            let mut buf = Vec::with_capacity(1 + s.len());
+            buf.push(0);
+            buf.extend_from_slice(s.as_bytes());
+            leak_vec(buf, out_len)
+        }
+        Err(e) => {
+            set_err(&e);
+            unsafe {
+                *out_len = 0;
+            }
+            std::ptr::null_mut()
+        }
+    }
+}
+
+/// Last pipeline graph (UTF-8).
+#[no_mangle]
+pub extern "C" fn tacit_graph(out_len: *mut usize) -> *mut u8 {
+    if out_len.is_null() {
+        return std::ptr::null_mut();
+    }
+    leak_vec(console::graph().into_bytes(), out_len)
+}
+
+/// Current path projection (UTF-8).
+#[no_mangle]
+pub extern "C" fn tacit_pwd(out_len: *mut usize) -> *mut u8 {
+    if out_len.is_null() {
+        return std::ptr::null_mut();
+    }
+    leak_vec(console::pwd().into_bytes(), out_len)
+}
+
+/// Reset the console namespace and Uiua bindings.
+#[no_mangle]
+pub extern "C" fn tacit_reset() {
+    console::reset();
+    clear_err();
 }

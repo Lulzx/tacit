@@ -8,6 +8,7 @@ crate-type = ["cdylib"]
 
 [dependencies]
 compile = { path = "../crates/compile" }
+store = { path = "../crates/store" }
 uir = { path = "../crates/uir" }
 
 [profile.release]

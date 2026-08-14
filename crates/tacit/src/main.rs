@@ -95,6 +95,15 @@ pub fn console_write_str(s: &str) {
     console_write_bytes(s.as_bytes());
 }
 
+pub fn console_clear() {
+    unsafe {
+        if let Some(c) = &mut CONSOLE {
+            c.clear();
+            c.flush();
+        }
+    }
+}
+
 pub fn console_char_count() -> usize {
     unsafe { CONSOLE.as_ref().map(|c| c.char_count()).unwrap_or(0) }
 }
@@ -283,12 +292,15 @@ pub extern "C" fn kernel_main(fdt_ptr: usize) -> ! {
     console_write_str("\n");
 
     // =======================================================================
-    // Keyboard -> Uiua shell.  The guest compiles and steps typed Uiua lines
-    // itself (same compiler source as the host), so bindings persist as
-    // values and there is no fixed echo program.
+    // Store + shell.  The namespace is a content-addressed value store
+    // (blobs + trees + refs).  The prompt is bash-shaped sugar over those
+    // objects; Uiua lines still compile as a fallback.
     // =======================================================================
-    console_write_str("\n--- Uiua shell ---\n");
-    console_write_str("type Uiua lines; bindings persist as values.\n");
+    console_write_str("\n");
+    shell::demo();
+    console_write_str("\n--- Tacit shell ---\n");
+    console_write_str("names bind immutable values. type `help`.\n");
+    console_write_str("Uiua lines still compile; bindings persist as values.\n");
     enable_irqs();
     shell::run();
 }

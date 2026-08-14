@@ -64,6 +64,31 @@
     color: var(--copper);
   }
   header .sub { color: var(--dim); font-size: 13px; }
+  .routes {
+    display: flex;
+    gap: 2px;
+    margin-left: 8px;
+  }
+  .routes a {
+    color: var(--dim);
+    text-decoration: none;
+    font-size: 13px;
+    font-weight: 500;
+    padding: 3px 9px;
+    border-radius: 999px;
+    border: 1px solid transparent;
+  }
+  .routes a:hover { color: var(--fg); }
+  .routes a[aria-current="page"] {
+    color: var(--fg);
+    border-color: var(--line);
+    background: var(--raised);
+  }
+  .routes a:focus-visible {
+    outline: 2px solid var(--copper);
+    outline-offset: 2px;
+  }
+
   #status {
     margin-left: auto;
     font-family: var(--mono);
@@ -416,6 +441,101 @@
   }
   .replay:hover { border-color: var(--copper); color: var(--copper); }
 
+  #view-console {
+    display: none;
+    grid-template-columns: minmax(0, 1fr) minmax(220px, 300px);
+    flex: 1;
+    min-height: 0;
+    overflow: hidden;
+  }
+  body.route-console #view-graph { display: none; }
+  body.route-console #view-console { display: grid; }
+  body.route-console header .sub-graph { display: none; }
+  body.route-graph header .sub-console { display: none; }
+
+  .term {
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    min-width: 0;
+    border-right: 1px solid var(--line);
+  }
+  .scroll {
+    flex: 1;
+    min-height: 0;
+    overflow: auto;
+    padding: 14px 16px 8px;
+    font: 13px/1.45 var(--mono);
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+  .scroll .cmd { color: var(--copper); }
+  .scroll .out { color: var(--fg); }
+  .scroll .err { color: var(--fault); }
+  .scroll .hint { color: var(--dim); }
+  .prompt {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 14px;
+    background: var(--paper);
+    color: var(--paper-ink);
+    border-top: 1px solid #d9d0c0;
+    flex: 0 0 auto;
+  }
+  .prompt .cwd {
+    font: 12px/1 var(--mono);
+    color: var(--paper-mute);
+    flex: 0 0 auto;
+  }
+  .prompt .ps {
+    font: 600 13px/1 var(--mono);
+    color: var(--copper-deep);
+    flex: 0 0 auto;
+  }
+  #line {
+    flex: 1;
+    min-width: 0;
+    border: none;
+    background: transparent;
+    color: var(--paper-ink);
+    font: 13px/1.4 var(--src);
+    padding: 4px 0;
+  }
+  #line:focus { outline: none; }
+  #line::placeholder { color: #9a8f80; }
+  .prompt:focus-within {
+    box-shadow: inset 0 0 0 2px var(--copper);
+  }
+
+  .gpanel {
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    padding: 12px 14px;
+    background: var(--panel);
+  }
+  .gpanel h2 {
+    margin: 0 0 8px;
+    font-size: 13px;
+    font-weight: 600;
+  }
+  .gpanel .why {
+    margin: 0 0 10px;
+    font-size: 12px;
+    color: var(--dim);
+  }
+  #cgraph {
+    margin: 0;
+    flex: 1;
+    min-height: 0;
+    overflow: auto;
+    font: 13px/1.45 var(--mono);
+    color: var(--fg);
+    white-space: pre;
+  }
+  #cgraph:empty::before { content: "no pipeline"; color: var(--dim); }
+
   @media (max-width: 860px) {
     header { padding: 8px 12px; gap: 8px; }
     header .sub { display: none; }
@@ -439,6 +559,12 @@
       flex: 0 0 180px;
     }
     .insp-story { max-height: 72px; }
+    #view-console {
+      grid-template-columns: 1fr;
+      grid-template-rows: minmax(0, 1fr) auto;
+    }
+    .term { border-right: none; border-bottom: 1px solid var(--line); }
+    .gpanel { flex: 0 0 auto; max-height: 180px; }
   }
 
   @media (prefers-reduced-motion: reduce) {
@@ -446,7 +572,7 @@
   }
 </style>
 </head>
-<body>
+<body class="route-graph">
 <!--
 THESIS: The page is a bench instrument. The program stays a graph; time is a tape of nodes firing. It refuses a result-only REPL.
 OWN-WORLD: Warm graphite machine around a paper notebook. Copper traces for time and selection. Schibsted Grotesk + Azeret/JuliaMono.
@@ -455,24 +581,32 @@ FIRST VIEWPORT: Paper editor left, five-stage pipeline and empty tape right, Run
 FORM: Operate instrument. FINISH: unreviewed and undocumented is unfinished.
 -->
 <header>
-  <h1>Tacit <em>graph</em></h1>
-  <span class="sub">First-milestone Uiua subset · source → UIR → fire</span>
+  <h1>Tacit <em id="title-em">graph</em></h1>
+  <span class="sub sub-graph">First-milestone Uiua subset · source → UIR → fire</span>
+  <span class="sub sub-console">names bind immutable values · | is a transform graph</span>
+  <nav class="routes" aria-label="Views">
+    <a href="/" data-route="/" id="nav-graph">graph</a>
+    <a href="/console" data-route="/console" id="nav-console">console</a>
+  </nav>
   <span id="status">loading wasm…</span>
 </header>
-<main>
+<main id="view-graph">
   <section class="bench">
     <div class="editor">
       <h2>Program</h2>
       <p class="hint">Read right to left. ⌘/Ctrl+Enter runs.</p>
-      <textarea id="src" spellcheck="false" aria-label="Uiua program">A ← ↯ [256 256] 1.0
-B ← ↯ [256 256] 2.0
-D ← ↯ [256 256] 3.0
-C ← × D + B A</textarea>
+      <textarea id="src" spellcheck="false" aria-label="Uiua program">W ← ↯ [768 768] 1.0
+X ← ↯ [768 768] 2.0
+Y ← ↯ [768 768] 0.25
+Z ← × Y + X W
+P ← &matmul Z Z
+V ← ⇌ P
+K ← /+ V</textarea>
     </div>
     <div class="presets" id="presets">
-      <button type="button" data-src="A ← ↯ [256 256] 1.0&#10;B ← ↯ [256 256] 2.0&#10;D ← ↯ [256 256] 3.0&#10;C ← × D + B A" aria-pressed="true">fusion</button>
+      <button type="button" title="Fill, fuse, 768×768 matmul, reverse, reduce" data-src="W ← ↯ [768 768] 1.0&#10;X ← ↯ [768 768] 2.0&#10;Y ← ↯ [768 768] 0.25&#10;Z ← × Y + X W&#10;P ← &amp;matmul Z Z&#10;V ← ⇌ P&#10;K ← /+ V" aria-pressed="true">pipeline</button>
+      <button type="button" data-src="A ← ↯ [256 256] 1.0&#10;B ← ↯ [256 256] 2.0&#10;D ← ↯ [256 256] 3.0&#10;C ← × D + B A">fusion</button>
       <button type="button" data-src="A ← ↯ [2048 2048] 1.0&#10;B ← ↯ [2048 2048] 2.0&#10;D ← ↯ [2048 2048] 3.0&#10;C ← × D + B A">fusion 2k</button>
-      <button type="button" title="Fill, fuse, 768×768 matmul, reverse, reduce" data-src="W ← ↯ [768 768] 1.0&#10;X ← ↯ [768 768] 2.0&#10;Y ← ↯ [768 768] 0.25&#10;Z ← × Y + X W&#10;P ← &amp;matmul Z Z&#10;V ← ⇌ P&#10;K ← /+ V">pipeline</button>
       <button type="button" data-src="A ← ↯ [64 64] 1.5&#10;B ← ↯ [64 64] 2.0&#10;C ← &amp;matmul A B">matmul</button>
       <button type="button" data-src="T ← ↯ [4 2] [3 1 4 1 5 9 2 6]&#10;⊏ ⍖ T">grade</button>
       <button type="button" data-src="+ 2 3">+ 2 3</button>
@@ -522,6 +656,22 @@ C ← × D + B A</textarea>
   </section>
 </main>
 
+<main id="view-console" aria-label="Tacit console">
+  <section class="term">
+    <div id="scroll" class="scroll" aria-live="polite"></div>
+    <form id="prompt" class="prompt" autocomplete="off">
+      <span class="cwd" id="cwd">/</span>
+      <span class="ps">tacit&gt;</span>
+      <input id="line" spellcheck="false" aria-label="Command" placeholder="pwd · cat numbers | parse | square | sum · graph">
+    </form>
+  </section>
+  <aside class="gpanel">
+    <h2>Graph</h2>
+    <p class="why">The last command as a value-transform chain. No processes. No byte pipes.</p>
+    <pre id="cgraph"></pre>
+  </aside>
+</main>
+
 <script>
 const OP = {
   0:'Const',1:'Add',2:'Sub',3:'Multiply',4:'Div',5:'Neg',6:'ReduceSum',7:'Reshape',
@@ -548,17 +698,116 @@ const enc = new TextEncoder();
 const dec = new TextDecoder();
 const reduceMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
 
+function appBase() {
+  let p = location.pathname;
+  if (p.endsWith('/index.html')) p = p.slice(0, -10);
+  else if (p.endsWith('/console/')) p = p.slice(0, -9);
+  else if (p.endsWith('/console')) p = p.slice(0, -8);
+  if (!p.endsWith('/')) p += '/';
+  return p || '/';
+}
+
+function isConsoleRoute() {
+  const p = (location.pathname.replace(/\/+$/, '') || '/');
+  return p.endsWith('/console') || /(?:^|[?&])view=console(?:&|$)/.test(location.search);
+}
+
+function applyRoute(push) {
+  const consoleOn = isConsoleRoute();
+  document.body.classList.toggle('route-console', consoleOn);
+  document.body.classList.toggle('route-graph', !consoleOn);
+  document.getElementById('title-em').textContent = consoleOn ? 'console' : 'graph';
+  document.title = consoleOn ? 'Tacit: console' : 'Tacit: watch the graph fire';
+  document.getElementById('nav-graph').href = appBase();
+  document.getElementById('nav-console').href = appBase() + 'console';
+  document.getElementById('nav-graph').setAttribute('aria-current', consoleOn ? 'false' : 'page');
+  document.getElementById('nav-console').setAttribute('aria-current', consoleOn ? 'page' : 'false');
+  if (push) {
+    const url = consoleOn ? appBase() + 'console' : appBase();
+    if (location.pathname.replace(/\/+$/, '') !== url.replace(/\/+$/, '')) {
+      history.pushState({}, '', url);
+    }
+  }
+  if (consoleOn) {
+    refreshConsoleChrome();
+    const input = document.getElementById('line');
+    if (input) input.focus();
+  }
+}
+
 async function init() {
+  applyRoute(false);
   try {
-    const resp = await fetch('tacit_wasm.wasm');
+    const resp = await fetch(appBase() + 'tacit_wasm.wasm');
     const { instance } = await WebAssembly.instantiate(await resp.arrayBuffer(), {});
     wasm = instance.exports;
     memory = wasm.memory;
     setStatus('wasm ready', 'ok');
     document.getElementById('run').disabled = false;
+    bootConsole();
   } catch (e) {
     setStatus('wasm failed: ' + e.message, 'err');
   }
+}
+
+function readStr(fn) {
+  const lenPtr = 2048;
+  new Uint32Array(memory.buffer, lenPtr, 1)[0] = 0;
+  const ptr = wasm[fn](lenPtr);
+  const len = new Uint32Array(memory.buffer, lenPtr, 1)[0];
+  if (ptr === 0 || len === 0) return '';
+  const s = dec.decode(new Uint8Array(memory.buffer.slice(ptr, ptr + len)));
+  wasm.uiua_free(ptr, len);
+  return s;
+}
+
+function refreshConsoleChrome() {
+  if (!wasm) return;
+  document.getElementById('cwd').textContent = readStr('tacit_pwd') || '/';
+  const g = readStr('tacit_graph');
+  document.getElementById('cgraph').textContent = g && g !== 'no pipeline' ? g : '';
+}
+
+function bootConsole() {
+  const scroll = document.getElementById('scroll');
+  scroll.innerHTML = '<div class="hint">names bind immutable values.\n| compiles to a transform graph — no processes, no byte pipes.\n\ntry:\n  echo "1 2 3 4" &gt; numbers\n  cat numbers | parse | square | sum\n  graph</div>';
+  refreshConsoleChrome();
+}
+
+const cmdHist = [];
+let cmdIdx = -1;
+
+function appendScroll(cls, text) {
+  const scroll = document.getElementById('scroll');
+  const div = document.createElement('div');
+  div.className = cls;
+  div.textContent = text;
+  scroll.appendChild(div);
+  scroll.scrollTop = scroll.scrollHeight;
+}
+
+function runConsoleLine(src) {
+  if (!wasm) {
+    appendScroll('err', 'wasm not ready');
+    return;
+  }
+  src = src.trim();
+  if (!src) return;
+  cmdHist.push(src);
+  cmdIdx = cmdHist.length;
+  appendScroll('cmd', 'tacit> ' + src);
+  const out = call('tacit_eval', enc.encode(src));
+  if (!out) {
+    appendScroll('err', lastError() || 'error');
+  } else {
+    const text = dec.decode(out.subarray(1));
+    if (text === '\f') {
+      bootConsole();
+    } else if (text) {
+      appendScroll('out', text);
+    }
+  }
+  refreshConsoleChrome();
 }
 
 function setStatus(text, cls) {
@@ -1169,6 +1418,41 @@ document.querySelectorAll('#presets button').forEach(b => {
     document.getElementById('src').value = b.dataset.src;
     run();
   });
+});
+
+document.querySelectorAll('.routes a').forEach(a => {
+  a.addEventListener('click', e => {
+    e.preventDefault();
+    const dest = a.dataset.route === '/console' ? appBase() + 'console' : appBase();
+    history.pushState({}, '', dest);
+    applyRoute(false);
+  });
+});
+window.addEventListener('popstate', () => applyRoute(false));
+
+document.getElementById('prompt').addEventListener('submit', e => {
+  e.preventDefault();
+  const input = document.getElementById('line');
+  const src = input.value;
+  input.value = '';
+  runConsoleLine(src);
+});
+document.getElementById('line').addEventListener('keydown', e => {
+  if (e.key === 'ArrowUp') {
+    e.preventDefault();
+    if (!cmdHist.length) return;
+    cmdIdx = Math.max(0, cmdIdx - 1);
+    e.target.value = cmdHist[cmdIdx];
+  } else if (e.key === 'ArrowDown') {
+    e.preventDefault();
+    if (cmdIdx < cmdHist.length - 1) {
+      cmdIdx += 1;
+      e.target.value = cmdHist[cmdIdx];
+    } else {
+      cmdIdx = cmdHist.length;
+      e.target.value = '';
+    }
+  }
 });
 init();
 </script>
