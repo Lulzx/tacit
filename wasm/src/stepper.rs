@@ -47,20 +47,81 @@ fn to_u32_shape(s: &[usize; 4]) -> [u32; 4] {
 pub fn run(prog: &Program) -> Result<Value, String> {
     let n = prog.nodes.len();
     let mut vals: Vec<Option<Value>> = (0..n).map(|_| None).collect();
-
     for i in 0..n {
-        let nd = &prog.nodes[i];
-        let v = step(prog, nd, &vals)?;
+        let v = step(prog, &prog.nodes[i], &vals)?;
         vals[i] = Some(v);
     }
-
-    // last node that produced a value
     for i in (0..n).rev() {
         if let Some(v) = &vals[i] {
             return Ok(Value::clone(v));
         }
     }
     Err("no value produced".into())
+}
+
+/// One fired node: enough for the browser to draw the tape without
+/// shipping the whole array back.
+pub struct StepInfo {
+    pub id: u32,
+    pub op: u8,
+    pub engine: u8,
+    pub dtype: u8,
+    pub rank: u8,
+    pub shape: [u32; 4],
+    pub bytes: u32,
+    pub name: Vec<u8>,
+    pub preview: Vec<u8>,
+}
+
+/// A loaded program that can be stepped one node at a time so the
+/// browser can time each fire with `performance.now()`.
+pub struct Session {
+    prog: Program,
+    vals: Vec<Option<Value>>,
+    next: usize,
+}
+
+impl Session {
+    pub fn load(prog: Program) -> Self {
+        let n = prog.nodes.len();
+        Session {
+            vals: (0..n).map(|_| None).collect(),
+            prog,
+            next: 0,
+        }
+    }
+
+    pub fn node_count(&self) -> usize {
+        self.prog.nodes.len()
+    }
+
+    pub fn step(&mut self) -> Result<Option<StepInfo>, String> {
+        if self.next >= self.prog.nodes.len() {
+            return Ok(None);
+        }
+        let i = self.next;
+        let nd = self.prog.nodes[i];
+        let v = step(&self.prog, &nd, &self.vals)?;
+        let preview_n = v.data.len().min(32);
+        let info = StepInfo {
+            id: nd.id,
+            op: nd.op,
+            engine: nd.engine,
+            dtype: v.dtype,
+            rank: v.rank,
+            shape: to_u32_shape(&v.shape),
+            bytes: v.byte_len() as u32,
+            name: self.prog.names[i].clone(),
+            preview: v.data[..preview_n].to_vec(),
+        };
+        self.vals[i] = Some(v);
+        self.next += 1;
+        Ok(Some(info))
+    }
+
+    pub fn last_value(&self) -> Option<&Value> {
+        self.vals.iter().rev().find_map(|v| v.as_ref())
+    }
 }
 
 fn input<'a>(prog: &'a Program, vals: &'a [Option<Value>], id: u32) -> Result<&'a Value, String> {

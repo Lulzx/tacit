@@ -3,64 +3,6 @@
 //! and writes the image payload (or dumps the graph).
 
 use compile::compile_file;
-use uir::*;
-
-/// Fusion pass: replace a single-consumer pure Add→Multiply chain with one
-/// AddMul kernel so the intermediate T = A+B is never materialized.
-fn fuse_pass(buf: &[u8]) -> Vec<u8> {
-    let prog = match uir::decode(buf) {
-        Ok(p) => p,
-        Err(_) => return buf.to_vec(),
-    };
-    let n = prog.nodes.len();
-    let mut dead = vec![false; n];
-    let mut consumers = vec![0u32; n];
-    for nd in &prog.nodes {
-        for inp in [nd.in0, nd.in1, nd.in2] {
-            if inp != NONE {
-                consumers[inp as usize] += 1;
-            }
-        }
-    }
-    let mut nodes = prog.nodes.clone();
-    for i in 0..n {
-        let nd = nodes[i];
-        if nd.op == OP_MUL && nd.pure {
-            // The Add may be either input of Multiply (× D + B A vs + B A × D).
-            for (add_slot, other_slot) in [(nd.in0, nd.in1), (nd.in1, nd.in0)] {
-                if add_slot == NONE || other_slot == NONE {
-                    continue;
-                }
-                let add_idx = add_slot as usize;
-                let add = nodes[add_idx];
-                if add.op == OP_ADD && add.pure && add.in2 == NONE && consumers[add_idx] == 1 {
-                    nodes[i].op = OP_ADD_MUL;
-                    nodes[i].in0 = add.in0;
-                    nodes[i].in1 = add.in1;
-                    nodes[i].in2 = other_slot;
-                    dead[add_idx] = true;
-                    break;
-                }
-            }
-        }
-    }
-
-    let mut enc = Encoder::new();
-    let mut remap = vec![NONE; n];
-    for (i, nd) in nodes.iter().enumerate() {
-        if !dead[i] {
-            remap[i] = enc.count;
-            let map = |x: u32| if x == NONE { NONE } else { remap[x as usize] };
-            let mut d = *nd;
-            d.in0 = map(d.in0);
-            d.in1 = map(d.in1);
-            d.in2 = map(d.in2);
-            let name: &[u8] = if d.op == OP_ADD_MUL { b"AddMul" } else { &prog.names[i] };
-            enc.node(&d, name, &prog.consts[i]);
-        }
-    }
-    enc.finish()
-}
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
@@ -100,7 +42,7 @@ fn main() {
     match compile_file(&src) {
         Ok(mut uir_bytes) => {
             if fuse {
-                uir_bytes = fuse_pass(&uir_bytes);
+                uir_bytes = compile::fuse(&uir_bytes);
             }
             if dump {
                 let prog = uir::decode(&uir_bytes).unwrap();

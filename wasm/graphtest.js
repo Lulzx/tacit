@@ -27,18 +27,26 @@ const OP = {0:'Const',1:'Add',2:'Sub',3:'Multiply',4:'Div',5:'Neg',6:'ReduceSum'
   // parseGraph
   const dv = new DataView(blob.buffer, blob.byteOffset);
   const count = dv.getUint32(0, true);
+  const version = dv.getUint32(4, true);
   const nodes = [];
-  let o = 4;
+  let o = 8;
   for (let i = 0; i < count; i++) {
     const id = dv.getUint32(o, true); o += 4;
     const op = blob[o]; o += 1;
+    const dtype = blob[o]; o += 1;
+    const rank = blob[o]; o += 1;
+    const engine = blob[o]; o += 1;
+    const pure = blob[o]; o += 1;
+    const shape = [];
+    for (let k = 0; k < 4; k++) { shape.push(dv.getUint32(o, true)); o += 4; }
     const nameLen = dv.getUint32(o, true); o += 4;
     const name = new TextDecoder().decode(blob.subarray(o, o + nameLen)); o += nameLen;
     const in0 = dv.getUint32(o, true); o += 4;
     const in1 = dv.getUint32(o, true); o += 4;
     const in2 = dv.getUint32(o, true); o += 4;
-    nodes.push({ id, op, name, in0, in1, in2 });
+    nodes.push({ id, op, dtype, rank, engine, pure, shape, name, in0, in1, in2 });
   }
+  console.log(`graph v${version}`);
   console.log(`graph: ${count} nodes`);
   for (const n of nodes) {
     const ins = [n.in0, n.in1, n.in2].filter(x => x !== 0xffffffff).join(',');
