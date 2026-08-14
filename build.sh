@@ -39,6 +39,7 @@ echo "-- compiling Uiua subset to UIR"
 "$HC" --no-fuse -o "$EMB/machine.uir"  uiua/machine.ua
 "$HC" --no-fuse -o "$EMB/graph.uir"    uiua/graph.ua
 "$HC" --no-fuse -o "$EMB/provenance.uir" uiua/provenance.ua
+"$HC" --no-fuse -o "$EMB/objects.uir"  uiua/objects.ua
 "$HC" --no-fuse -o "$EMB/bench-send.uir" uiua/bench-send.ua
 "$HC" --no-fuse -o "$EMB/policy.uir"   "uiua/$POLICY"
 "$HC" --fuse    -o "$EMB/bench-fused.uir"   uiua/bench-fusion.ua

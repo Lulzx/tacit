@@ -51,7 +51,9 @@ After the ready banner the guest, unattended:
 5. demonstrates effects (propose → simulate → validate → commit; a missing or
    forged display cap leaves the console unchanged) and the operation-array
    ABI (batching with dependencies, unmet dependencies refused),
-6. prints the fusion bench (fused bytes < unfused bytes) and the zero-copy
+6. exercises the content-addressed object store (`id = H(data)`: storing the
+   same value twice deduplicates to the same id; loading returns it),
+7. prints the fusion bench (fused bytes < unfused bytes) and the zero-copy
    send bench (capability share vs explicit copy, unique-region in-place
    mutation vs immutable refusal).
 

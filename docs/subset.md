@@ -58,6 +58,10 @@ arguments and code is read *right-to-left* (`+ 2 3` is 2+3, `× 2 + 3 5` is
 - `&send` — same-home send (a region-cap share/move, zero payload copy).
 - `&copy` — explicit payload copy (the zero-copy bench control).
 - `&fmt-machine` — render the machine description.
+- `&hash value` `&store value` `&load id` — the content-addressed object
+  store: `id = H(data)` (deterministic FNV-1a), stores deduplicate by id,
+  and `&load` returns the same value.  The store holds *values*, not bulk
+  payloads — anything over 64 KiB is refused and stays on the datapath.
 
 The table operations the agent/scheduler policies need are the core glyphs
 above: `▽ = … ⊡ …` filters a table by a column (Uiua's keep on a mask), and

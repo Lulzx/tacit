@@ -791,6 +791,40 @@ fn step_node(g: &mut Graph, opts: &RunOpts, id: usize) -> Result<Option<Value>, 
             }
             Ok(Some(v))
         }
+        OP_HASH => {
+            let a = input(g, nd, 0)?;
+            let id = crate::objects::content_id(&a);
+            let mut v = alloc_array(DTYPE_I64, 0, &[1, 1, 1, 1])?;
+            unsafe { *(v.data as *mut i64) = id as i64 };
+            Ok(Some(v))
+        }
+        OP_STORE => {
+            let a = input(g, nd, 0)?;
+            match crate::objects::store(&a) {
+                Some(id) => {
+                    let mut v = alloc_array(DTYPE_I64, 0, &[1, 1, 1, 1])?;
+                    unsafe { *(v.data as *mut i64) = id as i64 };
+                    Ok(Some(v))
+                }
+                None => Err("object store refused (limit)"),
+            }
+        }
+        OP_LOAD => {
+            let a = input(g, nd, 0)?;
+            let id = unsafe { *(a.data as *const i64) } as u64;
+            match crate::objects::load(id) {
+                Some((dtype, rank, shape, payload)) => {
+                    let mut v = alloc_array(dtype, rank, &shape)?;
+                    if payload.len() > 0 {
+                        unsafe {
+                            core::ptr::copy_nonoverlapping(payload.as_ptr(), v.data as *mut u8, payload.len());
+                        }
+                    }
+                    Ok(Some(v))
+                }
+                None => Err("no such object"),
+            }
+        }
         _ => Err("unknown op"),
     }
 }

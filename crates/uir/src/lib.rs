@@ -70,6 +70,9 @@ pub const OP_SELECT: u8 = 33; // ⊏ select rows (or elements) by an index vecto
 pub const OP_KEEP: u8 = 34; // ▽ keep rows where a mask is nonzero
 pub const OP_PICK: u8 = 35; // ⊡ pick a column of a table (element of a list)
 pub const OP_EQ: u8 = 36; // = elementwise equals -> i64 0/1 mask
+pub const OP_HASH: u8 = 37; // content id over a value (FNV-1a)
+pub const OP_STORE: u8 = 38; // register a value in the content-addressed store
+pub const OP_LOAD: u8 = 39; // fetch a value by content id
 
 pub const NONE: u32 = 0xffff_ffff;
 
@@ -132,6 +135,9 @@ pub fn op_name(op: u8) -> &'static str {
         OP_KEEP => "Keep",
         OP_PICK => "Pick",
         OP_EQ => "Equal",
+        OP_HASH => "Hash",
+        OP_STORE => "Store",
+        OP_LOAD => "Load",
         _ => "?",
     }
 }

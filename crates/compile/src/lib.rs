@@ -926,6 +926,20 @@ impl Compiler {
                 self.stack.push(SValue { node: n, dtype: DTYPE_U8, rank: 1, shape: [0, 1, 1, 1] });
                 Ok(())
             }
+            "hash" | "store" => {
+                let a = self.pop()?;
+                let op = if name == "hash" { OP_HASH } else { OP_STORE };
+                let n = self.emit(op, DTYPE_I64, 0, &[1, 1, 1, 1], true, CAP_NONE, a.node, NONE, NONE, if name == "hash" { "Hash" } else { "Store" }, &[]);
+                self.stack.push(SValue { node: n, dtype: DTYPE_I64, rank: 0, shape: [1, 1, 1, 1] });
+                Ok(())
+            }
+            "load" => {
+                let a = self.pop()?;
+                // The loaded value's shape is known only at run time.
+                let n = self.emit(OP_LOAD, DTYPE_I64, 1, &[0, 1, 1, 1], true, CAP_NONE, a.node, NONE, NONE, "Load", &[]);
+                self.stack.push(SValue { node: n, dtype: DTYPE_I64, rank: 1, shape: [0, 1, 1, 1] });
+                Ok(())
+            }
             other => Err(self.error(&format!("unknown system function '&{}'", other))),
         }
     }
