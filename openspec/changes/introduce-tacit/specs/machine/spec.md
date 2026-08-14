@@ -1,6 +1,6 @@
 ## Purpose
 
-Defines first-milestone hardware facing: a visible text console, keyboard, physical memory, and interrupt capture that never leaks raw ISRs upward.
+Defines first-milestone hardware facing on QEMU `aarch64` virt, plus a machine description of the Apple M4 Pro the image is being built toward: engines, page size, cache line, unified memory.
 
 ## ADDED Requirements
 
@@ -20,7 +20,7 @@ The system MUST present a text console the operator can read inside QEMU, using 
 - **AND** the newest line remains fully readable
 
 ### Requirement: Keyboard input
-The system MUST accept key presses from the QEMU keyboard and publish them as events. A granted reader MUST receive characters or key events. Unmapped keys MUST NOT crash the machine.
+The system MUST accept key presses from the QEMU keyboard (virtio-input or the documented virt default) and publish them as events. A granted reader MUST receive characters or key events. Unmapped keys MUST NOT crash the machine.
 
 #### Scenario: Printable key
 - **GIVEN** the ready state and a transform that reads input
@@ -41,13 +41,14 @@ The system MUST accept key presses from the QEMU keyboard and publish them as ev
 - **AND** it does not halt or corrupt kernel memory
 
 ### Requirement: Physical memory ownership
-The machine MUST own a physical memory map and MUST refuse allocations that overlap the kernel image, stack, or display buffer. Allocation failure MUST be reported.
+The machine MUST own a physical memory map and MUST refuse allocations that overlap the kernel image, stack, or display buffer. Allocation failure MUST be reported. Guest pages MUST be 16 KiB.
 
 #### Scenario: Successful allocation
 - **GIVEN** free memory large enough for a requested region
 - **WHEN** the region is allocated
 - **THEN** the caller receives a usable region of at least the requested size
 - **AND** the region does not overlap the kernel image, stack, or display buffer
+- **AND** the region is aligned to 16 KiB
 
 #### Scenario: Allocation failure
 - **GIVEN** free memory smaller than the request
@@ -63,3 +64,28 @@ Hardware interrupts MUST be acknowledged in the machine layer and turned into ti
 - **WHEN** a key IRQ arrives
 - **THEN** the machine appends one event record
 - **AND** no program-supplied ISR runs in interrupt context
+
+### Requirement: Machine description names engines
+The boot image MUST carry a machine description that names the reference Apple M4 Pro inventory even when the virt guest only wires the boot CPU. The description MUST include at least: P-cores, E-cores, NEON, SME, GPU, ANE, media, display, unified-memory home, 16 KiB pages, and 128-byte cache lines. The first milestone MUST mark only the boot CPU as online.
+
+#### Scenario: Description is readable after ready
+- **GIVEN** the ready state
+- **WHEN** the machine description is inspected
+- **THEN** it lists P-cores, E-cores, NEON, SME, GPU, ANE, media, and display as engines
+- **AND** it records `home = uma`, 16 KiB pages, and 128-byte lines
+- **AND** only the boot CPU is marked online
+
+#### Scenario: Offline engines do not crash the tiny program
+- **GIVEN** SME, GPU, and ANE marked offline
+- **WHEN** the bundled tiny program runs
+- **THEN** it completes on the boot CPU
+- **AND** the system does not attempt to dispatch those engines
+
+### Requirement: Virt is not the metal
+The first-milestone guest MUST NOT require Apple-specific interrupt controllers, DART, the display coprocessor, or the Secure Enclave. Those devices MAY appear in the machine description as offline. A later change MAY bring them online on a native boot path.
+
+#### Scenario: Missing Apple device is not a boot fault
+- **GIVEN** QEMU `aarch64` virt
+- **WHEN** AIC, DART, or the display coprocessor is absent
+- **THEN** boot still reaches the ready banner
+- **AND** the diagnostic path is not taken for those absences

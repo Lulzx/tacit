@@ -5,7 +5,7 @@ Defines Realms: isolation, quotas, capability tables, and failure boundaries tha
 ## ADDED Requirements
 
 ### Requirement: Realm is the isolation boundary
-A Realm MUST have a heap or region set, a set of transforms, a capability table, a resource quota, and a failure boundary. A Realm MUST NOT automatically receive stdin, stdout, a filesystem, a network stack, or an environment block.
+A Realm MUST have a heap or region set, a set of transforms, a capability table, a resource quota, and a failure boundary. A Realm MUST NOT automatically receive stdin, stdout, a filesystem, a network stack, an environment block, or a Metal/GPU device handle.
 
 #### Scenario: First milestone has one Realm
 - **GIVEN** a successful boot
@@ -16,8 +16,8 @@ A Realm MUST have a heap or region set, a set of transforms, a capability table,
 #### Scenario: No inherited Unix environment
 - **GIVEN** a new Realm
 - **WHEN** it is created
-- **THEN** it has no file descriptors, working directory, or environment variables
-- **AND** it cannot discover devices except through capabilities it is given
+- **THEN** it has no file descriptors, working directory, environment variables, or vendor compute handles
+- **AND** it cannot discover devices or engines except through capabilities it is given
 
 ### Requirement: Failure is contained
 A defined runtime fault inside a Realm MUST NOT reset the machine or corrupt another Realm's regions. The first milestone MAY halt that Realm in a diagnostic state if it is the only Realm.

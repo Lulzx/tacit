@@ -1,3 +1,3 @@
 # introduce-tacit
 
-Tacit virtualizes the computer as an array-transformation machine. The live graph is the machine. Speed comes from keeping that graph.
+Tacit virtualizes Apple Silicon as an array-transformation machine. One memory pool, many engines, a graph the system still understands. First boot is QEMU `aarch64` virt on the Mac.

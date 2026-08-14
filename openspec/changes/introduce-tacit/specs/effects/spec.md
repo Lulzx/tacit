@@ -1,6 +1,6 @@
 ## Purpose
 
-Makes effects explicit: a transformation names its authority, predicted world, and irreversibility, and can be simulated before commit.
+Makes effects explicit: a transformation names its authority, predicted world, and irreversibility, and can be simulated before commit. Engine choice is placement, not an effect, unless it mutates the world.
 
 ## ADDED Requirements
 

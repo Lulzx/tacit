@@ -1,11 +1,11 @@
 ## Purpose
 
-Defines Tacit's native vocabulary: values, transformations, composition, capabilities, and evaluation. Nothing else is fundamental.
+Defines Tacit's native vocabulary: values, transformations, composition, capabilities, and evaluation. Nothing else is fundamental. Unix objects and Metal/CUDA objects are derived or refused.
 
 ## ADDED Requirements
 
 ### Requirement: Five primitives
-The system MUST treat values, transformations, composition, capabilities, and evaluation as the only core objects. A proposed file, process, pipe, thread, or file-descriptor API MUST be expressed as those five or rejected.
+The system MUST treat values, transformations, composition, capabilities, and evaluation as the only core objects. A proposed file, process, pipe, thread, file-descriptor, Metal command-buffer, or CUDA stream API MUST be expressed as those five or rejected.
 
 #### Scenario: Independent work is composition, not threads
 - **GIVEN** a program that applies f, g, and h to the same value and then combines the results
@@ -14,7 +14,7 @@ The system MUST treat values, transformations, composition, capabilities, and ev
 - **AND** there is no thread-create interface used to express that independence
 
 #### Scenario: Storage is a value, not open/read/seek/write/close
-- **GIVEN** a later stored object (not required on the first QEMU image)
+- **GIVEN** a later stored object (not required on the first QEMU `aarch64` image)
 - **WHEN** a program uses it
 - **THEN** it appears as a value or region plus a capability
 - **AND** the program does not call a POSIX open/read/seek/write/close sequence
@@ -23,6 +23,12 @@ The system MUST treat values, transformations, composition, capabilities, and ev
 - **GIVEN** a change that adds ELF process loading or a POSIX pipe as a core object
 - **WHEN** it is reviewed against this spec
 - **THEN** it is out of contract unless it is derived from the five primitives without becoming a second worldview
+
+#### Scenario: Vendor compute API is refused as a core object
+- **GIVEN** a change that adds a Metal command buffer, a CUDA stream, or a CoreML model handle as a core object
+- **WHEN** it is reviewed against this spec
+- **THEN** it is out of contract
+- **AND** the equivalent must be a transform with an engine, or rejected
 
 ### Requirement: Program representation is the schedule
 A loaded program MUST expose data dependence as the schedule. The kernel MUST NOT recover dependence by watching instruction streams.

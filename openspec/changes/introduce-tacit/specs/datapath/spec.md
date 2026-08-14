@@ -1,6 +1,6 @@
 ## Purpose
 
-Keeps the microkernel off the data path: events and operations stay batched arrays; no per-element syscall and no in-kernel TCP or file stack.
+Keeps the microkernel off the data path: events and operations stay batched arrays; no per-element syscall and no in-kernel TCP, file, Metal, or CUDA stack.
 
 ## ADDED Requirements
 
@@ -27,6 +27,15 @@ The image MUST NOT add an in-kernel TCP stack or POSIX file datapath. If I/O bey
 - **WHEN** it is inspected
 - **THEN** there is no listen/accept TCP path and no POSIX file read path in the microkernel
 - **AND** fusion and cap-send benches still run
+
+### Requirement: No vendor compute runtime in the kernel
+The microkernel MUST NOT embed Metal, CoreML, CUDA, or Accelerate. Engine dispatch, when it exists, MUST be a placement of a UIR node, not a kernel-side command-buffer encoder.
+
+#### Scenario: Fusion bench has no Metal path
+- **GIVEN** the first-milestone fusion bench
+- **WHEN** the image is inspected
+- **THEN** the fused kernel does not encode a Metal command buffer
+- **AND** it still runs on the boot CPU
 
 ### Requirement: Policy stays off the inner loop
 Per-element stepping MUST NOT recompute global placement or scheduling scores. Global policy runs on the ready array, then the micro-stepper runs nodes.

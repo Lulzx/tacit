@@ -5,21 +5,28 @@ context: |
   A research operating system whose model comes from Uiua
   (https://www.uiua.org/), a tacit array language. Official Uiua 0.14+
   uses a tree-based compiler, not bytecode. Do not embed the hosted
-  runtime in ring 0; it assumes an OS.
+  runtime in EL1; it assumes an OS.
 
   Equation: OS = values + transformations + capabilities + placement.
   Not: processes + threads + files + syscalls.
   One sentence: Linux virtualizes a computer for processes; Tacit
-  virtualizes the computer as an array-transformation machine.
+  virtualizes Apple Silicon as an array-transformation machine.
   If Unix had never existed: values, transformations, composition,
   capabilities, evaluation. Agents are transforms. Every effect
   carries authority and provenance.
+  First machine: Apple M4 Pro. Unified memory (home = uma). Engines are
+  p-core, e-core, neon, sme, gpu, ane, media, display. Pages 16 KiB,
+  cache lines 128 B. SME, not SVE. Pointer authentication is the
+  intended capability mechanism; software unforgeability is enough on
+  virt. Host-versus-device RAM is not the core placement model.
   Research test: one Uiua program, discovered dependencies, zero-copy
-  immutable sharing, placement across cores/SIMD/GPU — no threads, locks,
-  explicit GPU dispatch, or byte-stream IPC. Unix compat is not success.
+  immutable sharing over UMA, placement across those engines — no
+  threads, locks, Metal/CUDA dispatch, or byte-stream IPC. Unix compat
+  is not success.
 
   Seven laws:
-  1. No core abstraction merely because Unix has it.
+  1. No core abstraction merely because Unix has it. No host/device
+     split merely because discrete GPUs have it.
   2. Pure computation is separated from authority.
   3. Concurrency follows dependencies, not threads.
   4. Arrays keep shape as far down as possible.
@@ -27,8 +34,12 @@ context: |
   6. Determinism is default; nondeterminism is explicit data.
   7. Hot path stays simple; global policy may be clever.
 
-  Runtime: Uiua → UIR → freestanding image → QEMU. No Linux/macOS guest.
-  First milestone: boot, console, allocator, keyboard, one Realm, tiny program.
+  Runtime: Uiua → UIR → freestanding AArch64 image → QEMU aarch64 virt
+  (HVF on an Apple Silicon Mac). No Linux/macOS guest. Native iBoot
+  boot is a later change. Metal/CoreML/Accelerate are not the guest
+  compute API.
+  First milestone: boot, console, 16 KiB allocator, keyboard, machine
+  description, one Realm, tiny program on p-core.
   Microkernel is tiny (maps, caps, events, execution, interrupts).
   Everything else is Uiua.
 
@@ -36,28 +47,32 @@ rules:
   proposal:
     - Include a Non-goals section
     - State the research thesis in one sentence
-    - Separate the first QEMU milestone from later research
+    - Separate the first QEMU aarch64 milestone from later research
+    - Treat Apple Silicon UMA + engines as the first machine, not x86_64
   specs:
     - Use Given/When/Then scenarios
     - Specify observable behavior, not Rust or Uiua function names
     - Prefer MUST/SHALL; use SHOULD only with a reason
-    - Do not specify POSIX, fork, files-as-worldview, or thread APIs as goals
+    - Do not specify POSIX, fork, files-as-worldview, thread APIs, or
+      Metal/CUDA APIs as goals
+    - Placement is engine + home, not host versus device
   design:
     - Explain values vs authorities
     - Explain how transforms become a runnable graph
     - Draw a hard line between microkernel mechanism and Uiua policy
     - Call out the first-milestone Uiua subset and UIR
+    - Call out UMA, engines, 16 KiB pages, and SME-not-SVE
   tasks:
-    - First tasks must produce a QEMU-bootable artifact
+    - First tasks must produce a QEMU aarch64-bootable artifact
     - Keep each task completable in one sitting
-    - Do not include POSIX porting work
+    - Do not include POSIX porting work or native iBoot bring-up
 
 operations:
   apply:
     guidance:
       - Do not start apply until the user explicitly asks
-      - Verify under QEMU, not only by compiling
-      - If a change would add a Unix abstraction to the core, refuse and cite law 1
+      - Verify under QEMU aarch64 virt (HVF on the Mac), not only by compiling
+      - If a change would add a Unix abstraction or a Metal/CUDA API to the core, refuse and cite law 1
   archive:
     guidance:
-      - Archive only after the first milestone is demonstrable under QEMU
+      - Archive only after the first milestone is demonstrable under QEMU aarch64 virt

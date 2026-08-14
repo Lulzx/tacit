@@ -1,11 +1,11 @@
 ## Purpose
 
-Defines the array-native kernel above the microkernel: transforms, dependency-derived scheduling, event batches, value channels, and a two-level placer.
+Defines the array-native kernel above the microkernel: transforms, dependency-derived scheduling, event batches, value channels, and a two-level placer over Apple Silicon engines.
 
 ## ADDED Requirements
 
 ### Requirement: Transform is the executable object
-The kernel MUST represent work as a Transform `T : A → B` with inputs, outputs, shape, effects, dependencies, capabilities, placement constraints, and priority. It MUST NOT expose a thread create, yield, or sleep interface as the programming model. CPU threads MAY exist only as an implementation detail of the stepper.
+The kernel MUST represent work as a Transform `T : A → B` with inputs, outputs, shape, effects, dependencies, capabilities, memory home, engine, cache-domain hint, and priority. It MUST NOT expose a thread create, yield, or sleep interface as the programming model. CPU threads MAY exist only as an implementation detail of the stepper.
 
 #### Scenario: Independent transforms are both ready
 - **GIVEN** two transforms that do not share unresolved inputs
@@ -44,7 +44,7 @@ The global policy that orders and classifies ready work MUST be a Uiua/UIR trans
 - **AND** the microkernel source does not have to change
 
 ### Requirement: Two-level scheduling
-A per-core or per-stepper micro-scheduler MUST only take ready work and run it. Global placement policy MUST NOT sit on every step. The first milestone MAY use a single stepper as the micro-scheduler.
+A per-core or per-stepper micro-scheduler MUST only take ready work and run it. Global placement policy MUST NOT sit on every step. The first milestone MAY use a single stepper as the micro-scheduler. A later placer MAY score engines by latency, movement, queue depth, and energy (P-core versus E-core).
 
 #### Scenario: First milestone has a cheap stepper
 - **GIVEN** the first-milestone image
@@ -95,11 +95,12 @@ Display and keyboard MUST be resources that produce or consume arrays. Program s
 - **WHEN** the reader runs
 - **THEN** it receives an array of those events or characters
 
-### Requirement: Placement is not hardcoded to one device
-A transform record MUST remain valid without a thread id or a specific accelerator. The first milestone MUST run nodes on the boot CPU only. Later placers MAY target SIMD or GPU using shape and placement already in UIR.
+### Requirement: Placement is an engine, not a thread id
+A transform record MUST remain valid without a thread id or a vendor compute API. The first milestone MUST run nodes on the boot CPU (`engine = p-core`, `home = uma`). Later placers MAY target NEON, SME, GPU, or ANE using shape, home, and engine already in UIR.
 
 #### Scenario: First milestone runs on the boot CPU
 - **GIVEN** the first-milestone image
 - **WHEN** a ready node is selected
 - **THEN** it executes on the boot CPU
 - **AND** the tiny program still runs
+- **AND** the node record still has an engine field

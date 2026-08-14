@@ -1,6 +1,6 @@
 ## Purpose
 
-Defines what Tacit believes computation is: a graph of array transformations the system can still see, not opaque processes the kernel virtualizes.
+Defines what Tacit believes computation is: a graph of array transformations the system can still see, running on Apple Silicon unified memory and engines, not opaque processes the kernel virtualizes.
 
 ## ADDED Requirements
 
@@ -34,10 +34,19 @@ The system MUST retain a semantic graph of the program after compile. For a prog
 - **GIVEN** an elementwise transform over a documented shape with many independent elements
 - **WHEN** UIR is produced
 - **THEN** the independent axis is recorded
-- **AND** the source does not create threads, tasks, or GPU kernels to express that parallelism
+- **AND** the source does not create threads, tasks, GPU kernels, or Metal command buffers to express that parallelism
+
+### Requirement: First machine is Apple Silicon
+The first machine the system is specified against MUST be Apple Silicon with unified memory and a documented engine set (P-cores, E-cores, NEON, SME, GPU, ANE, media, display). The first demonstration environment MUST be QEMU `aarch64` virt. The system MUST NOT treat a discrete GPU memory space as required to explain that machine.
+
+#### Scenario: Research test names engines
+- **GIVEN** the documented research test
+- **WHEN** an operator reads what placement means
+- **THEN** placement is across engines over unified memory
+- **AND** it is not a CUDA-style host-to-device copy plus launch
 
 ### Requirement: Specialized image, not a general kernel
-The first-milestone image MUST be a specialized payload: only the microkernel mechanism, the UIR stepper, the initial Realm, and the devices that milestone needs. It MUST NOT include a general-purpose filesystem, TCP stack, process table, or unused device class.
+The first-milestone image MUST be a specialized payload: only the microkernel mechanism, the UIR stepper, the initial Realm, the machine description, and the devices that milestone needs. It MUST NOT include a general-purpose filesystem, TCP stack, process table, or unused device class.
 
 #### Scenario: Unused subsystems are absent
 - **GIVEN** a built first-milestone image
@@ -46,7 +55,7 @@ The first-milestone image MUST be a specialized payload: only the microkernel me
 - **AND** the image still boots and runs the tiny program
 
 ### Requirement: OS state is arrays
-Ready work, event batches, capability tables, region maps, and later object directories MUST be representable as arrays that Uiua transforms can consume. The system MUST NOT require a lock-protected kernel tree as the only view of that state.
+Ready work, event batches, capability tables, region maps, the machine description, and later object directories MUST be representable as arrays that Uiua transforms can consume. The system MUST NOT require a lock-protected kernel tree as the only view of that state.
 
 #### Scenario: Ready set is an array
 - **GIVEN** a loaded graph with a mix of ready and blocked nodes
@@ -69,7 +78,7 @@ The project MUST treat the research test as success, and MUST NOT treat “runs 
 - **THEN** it is out of contract unless it also preserves the transformation-graph model
 
 ### Requirement: Seven laws
-The system MUST obey the seven laws in `proposal.md`. An abstraction MUST NOT enter the microkernel solely because Unix has it.
+The system MUST obey the seven laws in `proposal.md`. An abstraction MUST NOT enter the microkernel solely because Unix has it. A host-versus-device memory split MUST NOT enter the core solely because discrete GPUs have it.
 
 #### Scenario: Proposed POSIX object is rejected
 - **GIVEN** a change that would add a kernel file, `ioctl`, or thread control block as a core object
@@ -77,8 +86,14 @@ The system MUST obey the seven laws in `proposal.md`. An abstraction MUST NOT en
 - **THEN** it is out of contract
 - **AND** the equivalent must be expressed as values, transforms, capabilities, or placement, or rejected
 
+#### Scenario: Proposed host/device split is rejected as the core
+- **GIVEN** a change that would make CPU RAM versus GPU VRAM the only placement model
+- **WHEN** that change is reviewed against this spec
+- **THEN** it is out of contract for Apple Silicon
+- **AND** the equivalent must name an engine and a memory home
+
 ### Requirement: Freestanding execution
-The running system MUST execute with no Linux, macOS, Windows, or other general-purpose host OS underneath it. The only required demonstration environment is QEMU.
+The running system MUST execute with no Linux, macOS, Windows, or other general-purpose host OS underneath it. The only required demonstration environment is QEMU `aarch64` virt. The Apple Silicon Mac is the development host, not the guest kernel.
 
 #### Scenario: QEMU boot has no host OS guest
 - **GIVEN** a built system image
@@ -89,8 +104,14 @@ The running system MUST execute with no Linux, macOS, Windows, or other general-
 #### Scenario: Hosted interpreter is not the runtime
 - **GIVEN** the official hosted Uiua interpreter
 - **WHEN** an operator looks for the supported way to run the OS
-- **THEN** the supported path is the freestanding QEMU image
+- **THEN** the supported path is the freestanding QEMU `aarch64` image
 - **AND** embedding that hosted runtime in the guest kernel is not supported
+
+#### Scenario: macOS process is not the OS
+- **GIVEN** a proposed runtime that is a macOS process calling Metal, CoreML, or Accelerate as the guest compute path
+- **WHEN** it is reviewed as the supported way to run Tacit
+- **THEN** it is out of contract for the guest
+- **AND** a later measurement scaffold on the host MAY exist only if it is documented as a lab, not as the OS
 
 ### Requirement: Mechanism versus policy
 The microkernel MUST provide only trusted mechanism. Kernel policy, services, and programs MUST be Uiua compiled to UIR.
@@ -98,28 +119,5 @@ The microkernel MUST provide only trusted mechanism. Kernel policy, services, an
 #### Scenario: Policy is Uiua source
 - **GIVEN** the source tree after the first milestone
 - **WHEN** an operator inspects ready-set order and resource grants
-- **THEN** those rules exist as Uiua source
-- **AND** they are not the only copy of the rules, hardcoded in the microkernel
-
-### Requirement: Determinism is default
-Given the same input values and the same capability responses, a Realm MUST produce the same outputs regardless of core count or scheduling order of independent transforms.
-
-#### Scenario: Independent transforms commute
-- **GIVEN** two independent pure transforms in one Realm
-- **WHEN** they run in either order
-- **THEN** the Realm's outputs are identical
-
-#### Scenario: Nondeterminism is explicit data
-- **GIVEN** keyboard, clock, or random
-- **WHEN** a transform depends on them
-- **THEN** those sources appear as capability-backed inputs
-- **AND** they are not implicit global side channels
-
-### Requirement: Self-hosting is not blocked
-The architecture MUST allow a later system in which a Uiua compiler written in Uiua runs on Tacit and the scheduler remains a Uiua transform. The first milestone MUST NOT require that compiler.
-
-#### Scenario: First milestone uses a host compiler
-- **GIVEN** the first-milestone build
-- **WHEN** Uiua source is compiled
-- **THEN** compilation may run on the development host
-- **AND** the guest executes only the compiled UIR payload
+- **THEN** those policies are Uiua sources compiled to UIR
+- **AND** changing them does not require editing the AArch64 exception stub

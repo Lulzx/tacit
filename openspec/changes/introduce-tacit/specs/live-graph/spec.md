@@ -5,7 +5,7 @@ Makes the running machine a live computation graph. Process lists, traces, and r
 ## ADDED Requirements
 
 ### Requirement: One graph is the machine
-The running system MUST maintain a live graph of transformations, values on edges, required capabilities, and resource use. There MUST NOT be a separate process table that is the source of truth.
+The running system MUST maintain a live graph of transformations, values on edges, required capabilities, engines, and resource use. There MUST NOT be a separate process table that is the source of truth.
 
 #### Scenario: Tiny program is a graph
 - **GIVEN** the bundled `C = (A + B) × D` program after ready
@@ -26,7 +26,7 @@ Views that would be `ps`, `top`, `strace`, `lsof`, or `/proc` MUST be queries or
 #### Scenario: Resource use is on the node
 - **GIVEN** a running transform
 - **WHEN** it is inspected
-- **THEN** the view includes input shape, output shape, capabilities held, and a documented resource counter
+- **THEN** the view includes input shape, output shape, capabilities held, engine, home, and a documented resource counter
 - **AND** that data comes from the graph record
 
 ### Requirement: Provenance is native
@@ -42,7 +42,7 @@ For any live value, the system MUST answer which transform produced it and from 
 If a display shows pipelines, nodes, or "apps," those objects MUST be the same graph the scheduler executes. Dragging a value onto a transform MUST construct a composition, not launch a Unix process with a file path.
 
 #### Scenario: First milestone has a text projection
-- **GIVEN** the first QEMU image
+- **GIVEN** the first QEMU `aarch64` image
 - **WHEN** the operator requests the graph view
 - **THEN** a text projection of nodes and edges is shown on the console
 - **AND** a later graphical projection may replace the renderer without changing the graph

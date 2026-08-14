@@ -1,11 +1,11 @@
 ## Purpose
 
-Defines the freestanding Uiua subset compiler and UIR: the compiler and the scheduler share one semantic model of shape, purity, dependence, regions, and capabilities.
+Defines the freestanding Uiua subset compiler and UIR: the compiler and the scheduler share one semantic model of shape, purity, dependence, regions, capabilities, memory home, and engine.
 
 ## ADDED Requirements
 
 ### Requirement: UIR is the shared model
-Uiua subset source MUST lower to UIR, a graph IR that records shape, purity, dependencies, memory regions, capabilities, parallel dimensions, and placement constraints. The scheduler MUST consume UIR, not a separate thread description.
+Uiua subset source MUST lower to UIR, a graph IR that records shape, purity, dependencies, memory regions, capabilities, parallel dimensions, memory home, engine constraints, and cache-domain hints. The scheduler MUST consume UIR, not a separate thread description.
 
 #### Scenario: Compiler emits a graph
 - **GIVEN** valid subset source with two independent pure ops
@@ -15,9 +15,9 @@ Uiua subset source MUST lower to UIR, a graph IR that records shape, purity, dep
 
 #### Scenario: Official hosted runtime is not used
 - **GIVEN** a built guest image
-- **WHEN** the image runs under QEMU
+- **WHEN** the image runs under QEMU `aarch64` virt
 - **THEN** it does not invoke the official hosted Uiua interpreter
-- **AND** it does not require Linux system APIs that interpreter assumes
+- **AND** it does not require Linux or macOS system APIs that interpreter assumes
 
 ### Requirement: First-milestone language subset
 The first milestone MUST compile numeric scalars, rank-1 and rank-2 numeric arrays, character arrays, stack or combinator reordering sufficient for the tiny program, elementwise arithmetic, reduce, reshape, rank-wise map, display write, and keyboard read. Features outside the subset MUST be rejected at compile time with a location and a reason.
@@ -30,14 +30,14 @@ The first milestone MUST compile numeric scalars, rank-1 and rank-2 numeric arra
 - **AND** loaded UIR still has an Add node, a Multiply node, and a dependence edge from Add to Multiply
 
 #### Scenario: Rejected construct
-- **GIVEN** source that uses files, sockets, threads, or an unimplemented primitive
+- **GIVEN** source that uses files, sockets, threads, Metal, CUDA, or an unimplemented primitive
 - **WHEN** the compiler processes that source
 - **THEN** compilation fails
 - **AND** the diagnostic names the construct and the source location
 - **AND** no boot image that contains that program is produced
 
 ### Requirement: Host compile, guest execute
-Uiua source MUST be compiled on a development host into a UIR payload the guest can step or execute. Compile errors MUST stay on the host.
+Uiua source MUST be compiled on a development host into a UIR payload the guest can step or execute. The documented host is an Apple Silicon Mac. Compile errors MUST stay on the host.
 
 #### Scenario: Image contains the payload
 - **GIVEN** valid subset source
@@ -67,7 +67,7 @@ The compiler MUST classify each transform as pure or effectful. Effectful transf
 - **AND** it may run in either order relative to another independent pure node
 
 ### Requirement: Named ops survive until fusion and placement
-UIR MUST retain operator identity (at least elementwise arithmetic, reduce, reshape, rank-wise map) and shapes until after a documented fusion-and-placement stage. The first milestone MUST keep those names visible after load even if it does not fuse. A later change MAY fuse adjacent pure elementwise nodes into one kernel. The system MUST NOT lower the graph to an opaque instruction blob before that stage.
+UIR MUST retain operator identity (at least elementwise arithmetic, reduce, reshape, rank-wise map) and shapes until after a documented fusion-and-placement stage. The first milestone MUST keep those names visible after load even if it does not fuse. A later change MAY fuse adjacent pure elementwise nodes into one kernel, and MAY lower a named matmul onto SME. The system MUST NOT lower the graph to an opaque instruction blob before that stage. The system MUST NOT assume SVE; vector lowering is NEON or SME.
 
 #### Scenario: Add-multiply is still two named nodes after load
 - **GIVEN** `C = (A + B) × D`
@@ -77,13 +77,22 @@ UIR MUST retain operator identity (at least elementwise arithmetic, reduce, resh
 - **AND** the first milestone may still step them separately
 
 ### Requirement: Shape carries parallelism
-When a transform is independent across an axis, UIR MUST record that axis as a parallel dimension so a later placer can split work without recovering threads from machine code.
+When a transform is independent across an axis, UIR MUST record that axis as a parallel dimension so a later placer can split work across P-cores, NEON lanes, or tiles without recovering threads from machine code.
 
 #### Scenario: Rows are independent
 - **GIVEN** a rank-wise map over 16 rows
 - **WHEN** the UIR is inspected
 - **THEN** it records 16 independent units along that axis
 - **AND** the first milestone may still run them sequentially on the boot CPU
+
+### Requirement: Home and engine are recorded
+Compiled UIR MUST record `home = uma` on first-milestone arrays and MUST record an engine on each runnable node. The first-milestone default engine MUST be `p-core`. A later pass MAY change the engine without changing the Uiua source.
+
+#### Scenario: Tiny program nodes name uma and p-core
+- **GIVEN** the bundled tiny program after load
+- **WHEN** Add and Multiply are inspected
+- **THEN** their regions have `home = uma`
+- **AND** their engine is `p-core` or an equivalent boot-CPU default
 
 ### Requirement: Tiny program is the first-milestone demo
 The built image MUST include one bundled tiny Uiua program that runs automatically after ready, uses at least one array transform, and writes an observable result.

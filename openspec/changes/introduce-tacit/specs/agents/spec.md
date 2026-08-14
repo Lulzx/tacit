@@ -1,11 +1,11 @@
 ## Purpose
 
-Treats agents as transformations over structured state, not processes that click or parse Unix text. Authority and parallelism follow the graph.
+Treats agents as transformations over structured state, not processes that click or parse Unix text. Authority and parallelism follow the graph. Independent branches are placeable on engines.
 
 ## ADDED Requirements
 
 ### Requirement: Machine state is arrays
-Observable machine state MUST be available as arrays or tables (at least: transformations, capabilities, and later files, network, and agents). An observer MUST query those arrays rather than parse process-list text.
+Observable machine state MUST be available as arrays or tables (at least: transformations, capabilities, the machine description, and later files, network, and agents). An observer MUST query those arrays rather than parse process-list text.
 
 #### Scenario: Filter hot work
 - **GIVEN** running transforms with resource counters
@@ -33,7 +33,7 @@ An agent MUST be representable as state plus transformation plus capabilities pl
 - **AND** neither branch is a `clone`/`fork` process
 
 #### Scenario: First milestone has one agent-shaped transform
-- **GIVEN** the first QEMU image
+- **GIVEN** the first QEMU `aarch64` image
 - **WHEN** a documented agent-shaped transform queries the live graph and writes a summary to the display
 - **THEN** it holds only the capabilities it was granted
 - **AND** it does not receive an ambient shell
@@ -48,10 +48,10 @@ An agent MUST perform an effect only if the required capability is an input to t
 - **AND** no packet is sent
 
 ### Requirement: Placement of agent work
-Independent agent branches MUST be placeable like independent array rows. The first milestone MAY run them on the boot CPU. A later change MAY place them on another core, GPU, NPU, sandbox, or machine without the agent naming that hardware.
+Independent agent branches MUST be placeable like independent array rows. The first milestone MUST run them on the boot CPU (`engine = p-core`, `home = uma`). A later change MAY place them on another P-core, an E-core, SME, GPU, ANE, a sandbox, or another machine without the agent naming that hardware.
 
-#### Scenario: First milestone runs branches on host
+#### Scenario: First milestone runs branches on p-core
 - **GIVEN** two independent agent nodes
 - **WHEN** they run on the first image
-- **THEN** both execute on host placement
+- **THEN** both execute with `engine = p-core` and `home = uma`
 - **AND** the graph still records them as independent transforms
