@@ -143,6 +143,9 @@ numbers
  Sum
 ```
 
+`why name` walks how that name was produced. `explain name` adds type,
+hash, inputs, and the tree capability used.
+
 The same shell runs in the browser at `/console` (`python3 wasm/serve.py`).
 
 Before the shell, the boot runs the **self-hosted compiler check**: the

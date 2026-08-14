@@ -70,6 +70,13 @@ pub struct HistEntry {
     pub hash: Hash,
 }
 
+/// How a name was produced.  Stacked with history so undo pops both.
+#[derive(Clone, Debug)]
+pub struct Prov {
+    pub produced_by: Vec<String>,
+    pub inputs: Vec<String>,
+}
+
 /// Authority over a tree object.  The path is only a projection for `pwd`.
 #[derive(Clone, Debug)]
 pub struct TreeCap {
@@ -96,6 +103,8 @@ pub struct Store {
     objects: BTreeMap<Hash, Object>,
     /// Absolute path → history of the name binding (last entry is current).
     refs: BTreeMap<String, Vec<HistEntry>>,
+    /// Absolute path → production notes, aligned with `refs`.
+    provs: BTreeMap<String, Vec<Prov>>,
     root: Hash,
 }
 
@@ -104,6 +113,7 @@ impl Store {
         let mut s = Store {
             objects: BTreeMap::new(),
             refs: BTreeMap::new(),
+            provs: BTreeMap::new(),
             root: 0,
         };
         let root = s.insert(Object::Tree(Tree { entries: BTreeMap::new() })).expect("empty tree");
@@ -249,11 +259,13 @@ impl Store {
                 Action::Create => {
                     self.unbind(cap, name)?;
                     self.refs.remove(&key);
+                    self.provs.remove(&key);
                     return Ok(());
                 }
                 Action::Remove => {
                     let id = hist[0].hash;
                     self.refs.remove(&key);
+                    self.provs.remove(&key);
                     self.bind(cap, name, id, Kind::Blob, true)?;
                     return Ok(());
                 }
@@ -263,6 +275,9 @@ impl Store {
         // Drop the last action and restore the previous binding.
         let hist = self.refs.get_mut(&key).ok_or(Error::NotFound)?;
         hist.pop();
+        if let Some(p) = self.provs.get_mut(&key) {
+            p.pop();
+        }
         let prev = hist.last().cloned().ok_or(Error::NothingToUndo)?;
         match prev.action {
             Action::Remove => {
@@ -295,6 +310,28 @@ impl Store {
 
     pub fn object_count(&self) -> usize {
         self.objects.len()
+    }
+
+    /// Record how the latest binding of `name` was produced.
+    pub fn note(
+        &mut self,
+        cap: &TreeCap,
+        name: &str,
+        produced_by: Vec<String>,
+        inputs: Vec<String>,
+    ) -> Result<(), Error> {
+        self.require(cap, RIGHT_WRITE)?;
+        check_name(name)?;
+        let key = abs_path(&cap.path, name);
+        self.provs.entry(key).or_default().push(Prov { produced_by, inputs });
+        Ok(())
+    }
+
+    pub fn last_prov(&self, cap: &TreeCap, name: &str) -> Result<Option<&Prov>, Error> {
+        self.require(cap, RIGHT_READ)?;
+        check_name(name)?;
+        let key = abs_path(&cap.path, name);
+        Ok(self.provs.get(&key).and_then(|v| v.last()))
     }
 }
 

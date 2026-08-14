@@ -66,6 +66,8 @@ impl Session {
             "history" => self.cmd_history(&tokens[1..]),
             "undo" => self.cmd_undo(&tokens[1..]),
             "inspect" => self.cmd_inspect(&tokens[1..]),
+            "why" => self.cmd_why(&tokens[1..]),
+            "explain" => self.cmd_explain(&tokens[1..]),
             "graph" => self.cmd_graph(),
             "help" => self.cmd_help(),
             "clear" => Ok(Outcome::Handled("\x0c".to_string())),
@@ -135,6 +137,7 @@ impl Session {
             self.store
                 .write_file(&mut self.cwd, name, text.as_bytes(), "text/plain")
                 .map_err(err)?;
+            self.note(name, &["Value", "Bind"], &[]);
             self.set_graph(&["Value", "Bind", name]);
             return Ok(Outcome::Handled(String::new()));
         }
@@ -145,6 +148,7 @@ impl Session {
     fn cmd_mkdir(&mut self, args: &[String]) -> Result<Outcome, String> {
         let name = one_name(args, "mkdir")?;
         self.store.mkdir(&mut self.cwd, name).map_err(err)?;
+        self.note(name, &["EmptyTree", "Bind"], &[]);
         self.set_graph(&["EmptyTree", "Bind", name]);
         Ok(Outcome::Handled(String::new()))
     }
@@ -152,6 +156,7 @@ impl Session {
     fn cmd_cp(&mut self, args: &[String]) -> Result<Outcome, String> {
         let (src, dst) = two_names(args, "cp")?;
         self.store.copy(&mut self.cwd, src, dst).map_err(err)?;
+        self.note(dst, &["Bind"], &[src]);
         self.set_graph(&[src, "Bind", dst]);
         Ok(Outcome::Handled(String::new()))
     }
@@ -159,6 +164,7 @@ impl Session {
     fn cmd_mv(&mut self, args: &[String]) -> Result<Outcome, String> {
         let (src, dst) = two_names(args, "mv")?;
         self.store.rename(&mut self.cwd, src, dst).map_err(err)?;
+        self.note(dst, &["Rebind"], &[src]);
         self.set_graph(&[src, "Rebind", dst]);
         Ok(Outcome::Handled(String::new()))
     }
@@ -216,9 +222,10 @@ impl Session {
 
     fn cmd_help(&mut self) -> Result<Outcome, String> {
         Ok(Outcome::Handled(
-            "pwd ls cd cat echo mkdir cp mv rm history undo inspect graph help clear\n\
+            "pwd ls cd cat echo mkdir cp mv rm history undo inspect why explain graph help clear\n\
              names bind immutable values; undo repoints a name\n\
              | is a transform graph: cat n | parse | square | sum\n\
+             why / explain print how a name was produced\n\
              Uiua lines still compile"
                 .to_string(),
         ))
@@ -239,8 +246,130 @@ impl Session {
             self.store
                 .write_file(&mut self.cwd, &name, out.as_bytes(), "text/plain")
                 .map_err(err)?;
+            let labels: Vec<String> = self.last_graph.iter().map(|n| n.label.clone()).collect();
+            let inputs = pipeline_inputs(tokens);
+            let _ = self.store.note(&self.cwd, &name, labels, inputs);
             return Ok(Outcome::Handled(String::new()));
         }
+        Ok(Outcome::Handled(out))
+    }
+
+    fn note(&mut self, name: &str, produced_by: &[&str], inputs: &[&str]) {
+        let _ = self.store.note(
+            &self.cwd,
+            name,
+            produced_by.iter().map(|s| (*s).to_string()).collect(),
+            inputs.iter().map(|s| (*s).to_string()).collect(),
+        );
+    }
+
+    fn cmd_why(&mut self, args: &[String]) -> Result<Outcome, String> {
+        let name = one_name(args, "why")?;
+        let _ = self.store.inspect(&self.cwd, name).map_err(err)?;
+        let mut out = String::new();
+        let mut seen = alloc::collections::BTreeSet::new();
+        self.render_why(&mut out, name, &mut seen, 0);
+        self.set_graph(&[name, "Why", "Display"]);
+        Ok(Outcome::Handled(out))
+    }
+
+    fn render_why(
+        &self,
+        out: &mut String,
+        name: &str,
+        seen: &mut alloc::collections::BTreeSet<String>,
+        indent: usize,
+    ) {
+        if !seen.insert(name.to_string()) {
+            return;
+        }
+        let pad = " ".repeat(indent);
+        if indent == 0 {
+            out.push_str(name);
+        }
+        if let Ok(Some(p)) = self.store.last_prov(&self.cwd, name) {
+            let produced = p.produced_by.clone();
+            let inputs = p.inputs.clone();
+            for step in produced.iter().rev() {
+                out.push('\n');
+                out.push_str(&pad);
+                out.push_str("← ");
+                out.push_str(step);
+            }
+            for inp in &inputs {
+                if produced.iter().any(|s| s == inp) {
+                    out.push('\n');
+                    self.render_why(out, inp, seen, indent + 2);
+                    continue;
+                }
+                out.push('\n');
+                out.push_str(&pad);
+                out.push_str("← ");
+                out.push_str(inp);
+                out.push('\n');
+                self.render_why(out, inp, seen, indent + 2);
+            }
+            return;
+        }
+        if let Ok(h) = self.store.history(&self.cwd, name) {
+            if let Some(last) = h.last() {
+                out.push('\n');
+                out.push_str(&pad);
+                out.push_str("← ");
+                out.push_str(last.action.as_str());
+                out.push(' ');
+                let hx = hash_hex(last.hash);
+                out.push_str(core::str::from_utf8(&hx).unwrap_or("????????"));
+            }
+        }
+    }
+
+    fn cmd_explain(&mut self, args: &[String]) -> Result<Outcome, String> {
+        let name = one_name(args, "explain")?;
+        let (kind, id, size, typ) = self.store.inspect(&self.cwd, name).map_err(err)?;
+        let hx = hash_hex(id);
+        let hash = core::str::from_utf8(&hx).unwrap_or("????????");
+        let kind_s = match kind {
+            Kind::Blob => "blob",
+            Kind::Tree => "tree",
+        };
+        let mut out = String::new();
+        out.push_str(name);
+        out.push('\n');
+        if let Ok(Some(p)) = self.store.last_prov(&self.cwd, name) {
+            out.push_str("\nproduced by:\n");
+            out.push_str(&render_graph(
+                &p.produced_by
+                    .iter()
+                    .map(|s| GraphNode { label: s.clone() })
+                    .collect::<Vec<_>>(),
+            ));
+            out.push_str("\n\ninputs:\n");
+            if p.inputs.is_empty() {
+                out.push_str("  (none)\n");
+            } else {
+                for inp in &p.inputs {
+                    out.push_str("  ");
+                    out.push_str(inp);
+                    out.push('\n');
+                }
+            }
+        } else {
+            out.push('\n');
+        }
+        out.push_str(&format!(
+            "\ntype: {}\nkind: {}\nsize: {}\nhash: {}\n",
+            typ, kind_s, size, hash
+        ));
+        out.push_str("\nauthority:\n");
+        if self.cwd.rights & RIGHT_READ != 0 {
+            out.push_str("  read\n");
+        }
+        if self.cwd.rights & RIGHT_WRITE != 0 {
+            out.push_str("  write\n");
+        }
+        out.push_str("\nreproducible: yes");
+        self.set_graph(&[name, "Explain", "Display"]);
         Ok(Outcome::Handled(out))
     }
 
@@ -289,6 +418,20 @@ fn two_names<'a>(args: &'a [String], cmd: &str) -> Result<(&'a str, &'a str), St
     match args {
         [a, b] => Ok((a.as_str(), b.as_str())),
         _ => Err(format!("usage: {} <src> <dst>", cmd)),
+    }
+}
+
+fn pipeline_inputs(tokens: &[String]) -> Vec<String> {
+    let mut stage = Vec::new();
+    for t in tokens {
+        if t == "|" || t == ">" {
+            break;
+        }
+        stage.push(t.clone());
+    }
+    match stage.first().map(String::as_str) {
+        Some("cat") if stage.len() == 2 => alloc::vec![stage[1].clone()],
+        _ => Vec::new(),
     }
 }
 
@@ -441,5 +584,30 @@ mod tests {
         handled(&mut s, "echo \"1 2 3 4\" > numbers");
         handled(&mut s, "cat numbers | parse | square | sum > total");
         assert_eq!(handled(&mut s, "cat total"), "30");
+    }
+
+    #[test]
+    fn why_follows_production() {
+        let mut s = Session::new();
+        handled(&mut s, "echo \"1 2 3 4\" > numbers");
+        handled(&mut s, "cat numbers | parse | square | sum > total");
+        let w = handled(&mut s, "why total");
+        assert!(w.starts_with("total"), "{w}");
+        assert!(w.contains("← Sum"), "{w}");
+        assert!(w.contains("← Parse"), "{w}");
+        assert!(w.contains("← numbers") || w.contains("numbers"), "{w}");
+        assert!(w.contains("← Value") || w.contains("← Bind"), "{w}");
+    }
+
+    #[test]
+    fn explain_names_inputs_and_authority() {
+        let mut s = Session::new();
+        handled(&mut s, "echo hi > a");
+        let e = handled(&mut s, "explain a");
+        assert!(e.contains("produced by:"), "{e}");
+        assert!(e.contains("Bind"), "{e}");
+        assert!(e.contains("reproducible: yes"), "{e}");
+        assert!(e.contains("write"), "{e}");
+        assert!(e.contains("type: text/plain"), "{e}");
     }
 }

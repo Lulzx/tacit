@@ -163,6 +163,9 @@ pub fn demo() {
         "echo \"1 2 3 4\" > numbers",
         "cat numbers | parse | square | sum",
         "graph",
+        "cat numbers | parse | square | sum > total",
+        "why total",
+        "explain total",
     ];
 
     let mut ok = true;
