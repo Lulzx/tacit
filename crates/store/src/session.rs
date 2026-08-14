@@ -6,7 +6,9 @@ use alloc::string::String;
 use alloc::string::ToString;
 use alloc::vec::Vec;
 
-use crate::{hash_hex, Kind, Store, TreeCap, RIGHT_READ, RIGHT_WRITE};
+use alloc::collections::BTreeMap;
+
+use crate::{hash_hex, Kind, Look, Store, TreeCap, RIGHT_READ, RIGHT_WRITE};
 
 /// A recorded transform so `graph` can show the last command as a value graph.
 #[derive(Clone, Debug)]
@@ -18,6 +20,10 @@ pub struct Session {
     pub store: Store,
     pub cwd: TreeCap,
     last_graph: Vec<GraphNode>,
+    cmds: Vec<String>,
+    aliases: BTreeMap<String, String>,
+    dirstack: Vec<TreeCap>,
+    env: BTreeMap<String, String>,
 }
 
 pub enum Outcome {
@@ -31,7 +37,15 @@ impl Session {
     pub fn new() -> Self {
         let store = Store::new();
         let cwd = store.root_cap(RIGHT_READ | RIGHT_WRITE);
-        Session { store, cwd, last_graph: Vec::new() }
+        Session {
+            store,
+            cwd,
+            last_graph: Vec::new(),
+            cmds: Vec::new(),
+            aliases: BTreeMap::new(),
+            dirstack: Vec::new(),
+            env: BTreeMap::new(),
+        }
     }
 
     /// Seed `/system` as an empty tree.  `/home` is created by the user.
@@ -45,33 +59,93 @@ impl Session {
         if src.is_empty() || src.starts_with('#') {
             return Ok(Outcome::Handled(String::new()));
         }
-        let tokens = tokenize(src)?;
+        let tokens = expand_vars(tokenize(src)?, &self.env);
         if tokens.is_empty() {
             return Ok(Outcome::Handled(String::new()));
         }
         if tokens.iter().any(|t| t == "|") {
+            self.cmds.push(src.to_string());
             return self.eval_pipeline(&tokens);
         }
-        let cmd = tokens[0].as_str();
-        match cmd {
+        let cmd = tokens[0].clone();
+        if let Some(exp) = self.aliases.get(&cmd).cloned() {
+            let mut rest = tokenize(&exp)?;
+            rest.extend(tokens[1..].iter().cloned());
+            return self.eval(&rest.join(" "));
+        }
+        self.cmds.push(src.to_string());
+        match cmd.as_str() {
             "pwd" => self.cmd_pwd(),
             "ls" => self.cmd_ls(&tokens[1..]),
             "cd" => self.cmd_cd(&tokens[1..]),
-            "cat" => self.cmd_cat(&tokens[1..]),
+            "cat" | "less" | "more" => self.cmd_cat(&tokens[1..]),
             "echo" => self.cmd_echo(&tokens[1..]),
+            "printf" => self.cmd_printf(&tokens[1..]),
             "mkdir" => self.cmd_mkdir(&tokens[1..]),
-            "cp" => self.cmd_cp(&tokens[1..]),
+            "cp" | "ln" => self.cmd_cp(&tokens[1..]),
             "mv" => self.cmd_mv(&tokens[1..]),
             "rm" => self.cmd_rm(&tokens[1..]),
+            "rmdir" => self.cmd_rmdir(&tokens[1..]),
+            "touch" => self.cmd_touch(&tokens[1..]),
             "history" => self.cmd_history(&tokens[1..]),
             "undo" => self.cmd_undo(&tokens[1..]),
-            "inspect" => self.cmd_inspect(&tokens[1..]),
+            "inspect" | "stat" | "file" => self.cmd_inspect(&tokens[1..]),
             "why" => self.cmd_why(&tokens[1..]),
             "explain" => self.cmd_explain(&tokens[1..]),
             "graph" => self.cmd_graph(),
-            "help" => self.cmd_help(),
+            "help" | "man" => self.cmd_help(),
             "clear" => Ok(Outcome::Handled("\x0c".to_string())),
-            _ => Ok(Outcome::Unknown),
+            "head" => self.cmd_head_tail(&tokens[1..], true),
+            "tail" => self.cmd_head_tail(&tokens[1..], false),
+            "wc" => self.cmd_wc(&tokens[1..]),
+            "nl" => self.cmd_nl(&tokens[1..]),
+            "tac" => self.cmd_tac(&tokens[1..]),
+            "cut" => self.cmd_cut(&tokens[1..]),
+            "tr" => self.cmd_tr(&tokens[1..]),
+            "tee" => self.cmd_tee(&tokens[1..]),
+            "seq" => self.cmd_seq(&tokens[1..]),
+            "tree" => self.cmd_tree(&tokens[1..]),
+            "find" => self.cmd_find(&tokens[1..]),
+            "du" => self.cmd_du(&tokens[1..]),
+            "df" => self.cmd_df(),
+            "basename" => self.cmd_basename(&tokens[1..]),
+            "dirname" => self.cmd_dirname(&tokens[1..]),
+            "realpath" | "readlink" => self.cmd_realpath(&tokens[1..]),
+            "true" => Ok(Outcome::Handled(String::new())),
+            "false" => Err("false".to_string()),
+            "test" => self.cmd_test(&tokens[1..], false),
+            "[" => self.cmd_test(&tokens[1..], true),
+            "exit" | "logout" => Ok(Outcome::Handled(String::new())),
+            "alias" => self.cmd_alias(&tokens[1..]),
+            "unalias" => self.cmd_unalias(&tokens[1..]),
+            "type" | "which" | "command" => self.cmd_type(&tokens[1..]),
+            "pushd" => self.cmd_pushd(&tokens[1..]),
+            "popd" => self.cmd_popd(),
+            "dirs" => self.cmd_dirs(),
+            "export" | "set" => self.cmd_export(&tokens[1..]),
+            "unset" => self.cmd_unset(&tokens[1..]),
+            "env" => self.cmd_env(),
+            "date" => Ok(Outcome::Handled("clock is a capability; this shell is deterministic".to_string())),
+            "whoami" => Ok(Outcome::Handled("shell".to_string())),
+            "hostname" => Ok(Outcome::Handled("tacit".to_string())),
+            "uname" => Ok(Outcome::Handled("Tacit array-transformation machine".to_string())),
+            "chmod" | "chown" | "umask" => Err("authority is a capability, not a mode".to_string()),
+            "sudo" => Err("no ambient authority".to_string()),
+            "ps" | "top" | "kill" | "jobs" | "fg" | "bg" => {
+                Err("no processes. try graph".to_string())
+            }
+            "bash" | "sh" => Err("this is the Tacit shell".to_string()),
+            "vim" | "vi" | "nano" | "ed" => {
+                Err("edit is a transform: echo text > name, or undo name".to_string())
+            }
+            "ssh" | "curl" | "wget" | "apt" | "git" => {
+                Err("not a Tacit transform (no network, no packages)".to_string())
+            }
+            _ => {
+                self.cmds.pop();
+                let _ = cmd;
+                Ok(Outcome::Unknown)
+            }
         }
     }
 
@@ -81,17 +155,43 @@ impl Session {
     }
 
     fn cmd_ls(&mut self, args: &[String]) -> Result<Outcome, String> {
-        if !args.is_empty() {
-            return Err("usage: ls".to_string());
-        }
+        let (flags, rest) = take_flags(args);
+        let long = flags.iter().any(|f| f.contains('l'));
+        let spec = rest.first().map(String::as_str).unwrap_or(".");
+        let cap = match self.store.look(&self.cwd, spec).map_err(err)? {
+            Look::Tree(c) => c,
+            Look::Blob { name, .. } => {
+                self.set_graph(&["Children", "Display"]);
+                return Ok(Outcome::Handled(name));
+            }
+        };
         self.set_graph(&["CurrentTree", "Children", "Display"]);
-        let kids = self.store.list(&self.cwd).map_err(err)?;
+        let kids = self.store.list(&cap).map_err(err)?;
         let mut out = String::new();
-        for (i, (name, _, _)) in kids.iter().enumerate() {
+        for (i, (name, kind, hash)) in kids.iter().enumerate() {
             if i > 0 {
                 out.push('\n');
             }
-            out.push_str(name);
+            if long {
+                let mark = match kind {
+                    Kind::Tree => "tree",
+                    Kind::Blob => "blob",
+                };
+                let size = match kind {
+                    Kind::Blob => self.store.blob_len(*hash).unwrap_or(0),
+                    Kind::Tree => 0,
+                };
+                let hx = hash_hex(*hash);
+                out.push_str(&format!(
+                    "{} {:>5} {} {}",
+                    mark,
+                    size,
+                    core::str::from_utf8(&hx).unwrap_or("????????"),
+                    name
+                ));
+            } else {
+                out.push_str(name);
+            }
         }
         Ok(Outcome::Handled(out))
     }
@@ -108,20 +208,18 @@ impl Session {
     }
 
     fn cmd_cat(&mut self, args: &[String]) -> Result<Outcome, String> {
-        let name = one_name(args, "cat")?;
-        let (text, nbytes) = {
-            let blob = self.store.read_file(&self.cwd, name).map_err(err)?;
-            match core::str::from_utf8(&blob.bytes) {
-                Ok(s) => (s.to_string(), blob.bytes.len()),
-                Err(_) => (String::new(), blob.bytes.len()),
-            }
-        };
-        self.set_graph(&[name, "Read", "Display"]);
-        if text.is_empty() && nbytes > 0 {
-            Ok(Outcome::Handled(format!("<{} bytes>", nbytes)))
-        } else {
-            Ok(Outcome::Handled(text))
+        if args.is_empty() {
+            return Err("usage: cat <name>…".to_string());
         }
+        let mut out = String::new();
+        for (i, spec) in args.iter().enumerate() {
+            if i > 0 {
+                out.push('\n');
+            }
+            out.push_str(&self.read_text(spec)?);
+        }
+        self.set_graph(&[args[0].as_str(), "Read", "Display"]);
+        Ok(Outcome::Handled(out))
     }
 
     fn cmd_echo(&mut self, args: &[String]) -> Result<Outcome, String> {
@@ -146,10 +244,21 @@ impl Session {
     }
 
     fn cmd_mkdir(&mut self, args: &[String]) -> Result<Outcome, String> {
-        let name = one_name(args, "mkdir")?;
-        self.store.mkdir(&mut self.cwd, name).map_err(err)?;
-        self.note(name, &["EmptyTree", "Bind"], &[]);
-        self.set_graph(&["EmptyTree", "Bind", name]);
+        let (flags, rest) = take_flags(args);
+        if rest.is_empty() {
+            return Err("usage: mkdir [-p] <name>…".to_string());
+        }
+        let parents = flags.iter().any(|f| f.contains('p'));
+        for spec in &rest {
+            if parents || spec.contains('/') {
+                self.store.mkdir_p(&mut self.cwd, spec).map_err(err)?;
+            } else {
+                self.store.mkdir(&mut self.cwd, spec).map_err(err)?;
+                self.note(spec, &["EmptyTree", "Bind"], &[]);
+            }
+        }
+        self.sync_cwd();
+        self.set_graph(&["EmptyTree", "Bind"]);
         Ok(Outcome::Handled(String::new()))
     }
 
@@ -170,13 +279,46 @@ impl Session {
     }
 
     fn cmd_rm(&mut self, args: &[String]) -> Result<Outcome, String> {
-        let name = one_name(args, "rm")?;
-        self.store.remove(&mut self.cwd, name).map_err(err)?;
-        self.set_graph(&["CurrentTree", "RemoveBinding", name]);
+        let (flags, rest) = take_flags(args);
+        if rest.is_empty() {
+            return Err("usage: rm [-r] <name>…".to_string());
+        }
+        let rec = flags.iter().any(|f| f.contains('r') || f.contains('R'));
+        for spec in &rest {
+            match self.store.look(&self.cwd, spec).map_err(err)? {
+                Look::Tree(t) => {
+                    if t.path.is_empty() {
+                        return Err("cannot remove /".to_string());
+                    }
+                    if !rec {
+                        return Err("is a tree (use rm -r)".to_string());
+                    }
+                    let name = t.path.last().unwrap().clone();
+                    let mut parent = parent_cap(&self.store, &self.cwd, &t.path)?;
+                    self.store.remove(&mut parent, &name).map_err(err)?;
+                }
+                Look::Blob { mut parent, name, .. } => {
+                    self.store.remove(&mut parent, &name).map_err(err)?;
+                }
+            }
+        }
+        self.sync_cwd();
+        self.set_graph(&["CurrentTree", "RemoveBinding"]);
         Ok(Outcome::Handled(String::new()))
     }
 
     fn cmd_history(&mut self, args: &[String]) -> Result<Outcome, String> {
+        if args.is_empty() {
+            let mut out = String::new();
+            for (i, c) in self.cmds.iter().enumerate() {
+                if i > 0 {
+                    out.push('\n');
+                }
+                out.push_str(&format!("{:>4}  {}", i + 1, c));
+            }
+            self.set_graph(&["CmdLog", "Display"]);
+            return Ok(Outcome::Handled(out));
+        }
         let name = one_name(args, "history")?;
         let hist = self.store.history(&self.cwd, name).map_err(err)?;
         let mut out = String::new();
@@ -222,11 +364,13 @@ impl Session {
 
     fn cmd_help(&mut self) -> Result<Outcome, String> {
         Ok(Outcome::Handled(
-            "pwd ls cd cat echo mkdir cp mv rm history undo inspect why explain graph help clear\n\
-             names bind immutable values; undo repoints a name\n\
-             | is a transform graph: cat n | parse | square | sum\n\
-             why / explain print how a name was produced\n\
-             Uiua lines still compile"
+            "names bind immutable values; | is a transform graph\n\
+             nav:     pwd ls cd pushd popd dirs tree find\n\
+             names:   cat echo printf touch mkdir cp ln mv rm rmdir\n\
+             text:    head tail wc nl tac cut tr tee seq grep sort uniq\n\
+             meta:    history undo inspect stat why explain graph help\n\
+             shell:   alias type env export test true false clear\n\
+             tacit:   date/whoami/uname are projections, not Unix"
                 .to_string(),
         ))
     }
@@ -240,7 +384,7 @@ impl Session {
     }
 
     fn eval_pipeline(&mut self, tokens: &[String]) -> Result<Outcome, String> {
-        let (out, graph, dest) = crate::pipe::run(&self.store, &self.cwd, tokens)?;
+        let (out, graph, dest) = crate::pipe::run(&mut self.store, &mut self.cwd, tokens)?;
         self.last_graph = graph;
         if let Some(name) = dest {
             self.store
@@ -378,6 +522,435 @@ impl Session {
         Ok(Outcome::Handled(out))
     }
 
+    fn cmd_printf(&mut self, args: &[String]) -> Result<Outcome, String> {
+        let text = crate::pipe::printf_fmt(args)?;
+        self.set_graph(&["Printf", "Display"]);
+        Ok(Outcome::Handled(text))
+    }
+
+    fn cmd_rmdir(&mut self, args: &[String]) -> Result<Outcome, String> {
+        if args.is_empty() {
+            return Err("usage: rmdir <name>…".to_string());
+        }
+        for spec in args {
+            let (mut parent, name) = leaf_parent(&self.store, &self.cwd, spec)?;
+            self.store.rmdir(&mut parent, &name).map_err(err)?;
+        }
+        self.sync_cwd();
+        self.set_graph(&["RemoveBinding"]);
+        Ok(Outcome::Handled(String::new()))
+    }
+
+    fn cmd_touch(&mut self, args: &[String]) -> Result<Outcome, String> {
+        if args.is_empty() {
+            return Err("usage: touch <name>…".to_string());
+        }
+        for spec in args {
+            let (mut parent, name) = leaf_parent(&self.store, &self.cwd, spec)?;
+            self.store.touch(&mut parent, &name).map_err(err)?;
+            self.note(&name, &["Touch", "Bind"], &[]);
+        }
+        self.sync_cwd();
+        self.set_graph(&["Touch", "Bind"]);
+        Ok(Outcome::Handled(String::new()))
+    }
+
+    fn cmd_head_tail(&mut self, args: &[String], head: bool) -> Result<Outcome, String> {
+        let n = crate::pipe::flag_n(args, 10)?;
+        let spec = {
+            let mut i = 0;
+            let mut found = None;
+            while i < args.len() {
+                if args[i] == "-n" {
+                    i += 2;
+                    continue;
+                }
+                if args[i].starts_with('-') {
+                    i += 1;
+                    continue;
+                }
+                found = Some(args[i].as_str());
+                break;
+            }
+            found.ok_or("usage: head [-n N] <name>")?
+        };
+        let text = self.read_text(spec)?;
+        let mut lines: Vec<&str> = text.lines().collect();
+        if head {
+            lines.truncate(n);
+        } else {
+            let start = lines.len().saturating_sub(n);
+            lines = lines[start..].to_vec();
+        }
+        self.set_graph(&[if head { "Head" } else { "Tail" }, "Display"]);
+        Ok(Outcome::Handled(lines.join("\n")))
+    }
+
+    fn cmd_wc(&mut self, args: &[String]) -> Result<Outcome, String> {
+        let (flags, rest) = take_flags(args);
+        let spec = rest.first().ok_or("usage: wc [-lwc] <name>")?;
+        let text = self.read_text(spec)?;
+        let val = crate::pipe::PipeVal::Text(text);
+        self.set_graph(&["Count", "Display"]);
+        Ok(Outcome::Handled(crate::pipe::wc_text(&val, &flags)))
+    }
+
+    fn cmd_nl(&mut self, args: &[String]) -> Result<Outcome, String> {
+        let spec = one_name(args, "nl")?;
+        let text = self.read_text(spec)?;
+        let out = text
+            .lines()
+            .enumerate()
+            .map(|(i, l)| format!("{}\t{}", i + 1, l))
+            .collect::<Vec<_>>()
+            .join("\n");
+        self.set_graph(&["NumberLines", "Display"]);
+        Ok(Outcome::Handled(out))
+    }
+
+    fn cmd_tac(&mut self, args: &[String]) -> Result<Outcome, String> {
+        let spec = one_name(args, "tac")?;
+        let text = self.read_text(spec)?;
+        let mut lines: Vec<&str> = text.lines().collect();
+        lines.reverse();
+        self.set_graph(&["Reverse", "Display"]);
+        Ok(Outcome::Handled(lines.join("\n")))
+    }
+
+    fn cmd_cut(&mut self, args: &[String]) -> Result<Outcome, String> {
+        let mut delim = "\t".to_string();
+        let mut field = 1usize;
+        let mut spec = None;
+        let mut i = 0;
+        while i < args.len() {
+            if args[i] == "-d" {
+                delim = args.get(i + 1).ok_or("usage: cut -d <delim> -f <n> <name>")?.clone();
+                i += 2;
+                continue;
+            }
+            if args[i] == "-f" {
+                field = args
+                    .get(i + 1)
+                    .ok_or("usage: cut -d <delim> -f <n> <name>")?
+                    .parse()
+                    .map_err(|_| "bad field")?;
+                i += 2;
+                continue;
+            }
+            spec = Some(args[i].clone());
+            i += 1;
+        }
+        let spec = spec.ok_or("usage: cut -d <delim> -f <n> <name>")?;
+        if field == 0 {
+            return Err("cut: fields start at 1".to_string());
+        }
+        let text = self.read_text(&spec)?;
+        let out = text
+            .lines()
+            .map(|l| l.split(&delim).nth(field - 1).unwrap_or("").to_string())
+            .collect::<Vec<_>>()
+            .join("\n");
+        self.set_graph(&["Cut", "Display"]);
+        Ok(Outcome::Handled(out))
+    }
+
+    fn cmd_tr(&mut self, args: &[String]) -> Result<Outcome, String> {
+        // tr from to  — needs stdin; require a name: tr from to <name> or use pipe
+        if args.len() < 2 {
+            return Err("usage: tr <from> <to>  (in a pipeline) or tr <from> <to> <name>".to_string());
+        }
+        if args.len() == 2 {
+            return Err("tr needs input: cat f | tr a b".to_string());
+        }
+        let text = self.read_text(&args[2])?;
+        let from: Vec<char> = args[0].chars().collect();
+        let to: Vec<char> = args[1].chars().collect();
+        let out: String = text
+            .chars()
+            .map(|c| {
+                if let Some(i) = from.iter().position(|x| *x == c) {
+                    *to.get(i).unwrap_or(&c)
+                } else {
+                    c
+                }
+            })
+            .collect();
+        self.set_graph(&["Translate", "Display"]);
+        Ok(Outcome::Handled(out))
+    }
+
+    fn cmd_tee(&mut self, _args: &[String]) -> Result<Outcome, String> {
+        Err("tee is a pipeline stage: cat f | tee copy".to_string())
+    }
+
+    fn cmd_seq(&mut self, args: &[String]) -> Result<Outcome, String> {
+        let lines = crate::pipe::seq_lines(args)?;
+        self.set_graph(&["Seq", "Display"]);
+        Ok(Outcome::Handled(lines.join("\n")))
+    }
+
+    fn cmd_tree(&mut self, args: &[String]) -> Result<Outcome, String> {
+        let spec = args.first().map(String::as_str).unwrap_or(".");
+        let cap = match self.store.look(&self.cwd, spec).map_err(err)? {
+            Look::Tree(c) => c,
+            Look::Blob { name, .. } => return Ok(Outcome::Handled(name)),
+        };
+        let ents = self.store.walk(&cap).map_err(err)?;
+        let mut out = String::from(".");
+        for e in &ents {
+            out.push('\n');
+            let depth = e.path.bytes().filter(|b| *b == b'/').count();
+            for _ in 0..depth {
+                out.push_str("    ");
+            }
+            let leaf = e.path.rsplit('/').next().unwrap_or(&e.path);
+            out.push_str(leaf);
+            if e.kind == Kind::Tree {
+                out.push('/');
+            }
+        }
+        self.set_graph(&["Tree", "Display"]);
+        Ok(Outcome::Handled(out))
+    }
+
+    fn cmd_find(&mut self, args: &[String]) -> Result<Outcome, String> {
+        let spec = args.iter().find(|a| !a.starts_with('-')).map(String::as_str).unwrap_or(".");
+        let cap = match self.store.look(&self.cwd, spec).map_err(err)? {
+            Look::Tree(c) => c,
+            Look::Blob { name, .. } => return Ok(Outcome::Handled(name)),
+        };
+        let pat = {
+            let mut p = None;
+            let mut i = 0;
+            while i + 1 < args.len() {
+                if args[i] == "-name" {
+                    p = Some(args[i + 1].as_str());
+                }
+                i += 1;
+            }
+            p
+        };
+        let ents = self.store.walk(&cap).map_err(err)?;
+        let mut out = String::new();
+        for e in &ents {
+            let leaf = e.path.rsplit('/').next().unwrap_or(&e.path);
+            if let Some(p) = pat {
+                if !glob_match(leaf, p) {
+                    continue;
+                }
+            }
+            if !out.is_empty() {
+                out.push('\n');
+            }
+            out.push_str(&e.path);
+        }
+        self.set_graph(&["Find", "Display"]);
+        Ok(Outcome::Handled(out))
+    }
+
+    fn cmd_du(&mut self, args: &[String]) -> Result<Outcome, String> {
+        let spec = args.first().map(String::as_str).unwrap_or(".");
+        let cap = match self.store.look(&self.cwd, spec).map_err(err)? {
+            Look::Tree(c) => c,
+            Look::Blob { hash, name, .. } => {
+                let n = self.store.blob_len(hash).unwrap_or(0);
+                return Ok(Outcome::Handled(format!("{}\t{}", n, name)));
+            }
+        };
+        let ents = self.store.walk(&cap).map_err(err)?;
+        let mut total = 0usize;
+        let mut out = String::new();
+        for e in &ents {
+            if e.kind == Kind::Blob {
+                total += e.size;
+                if !out.is_empty() {
+                    out.push('\n');
+                }
+                out.push_str(&format!("{}\t{}", e.size, e.path));
+            }
+        }
+        if !out.is_empty() {
+            out.push('\n');
+        }
+        out.push_str(&format!("{}\t.", total));
+        self.set_graph(&["Size", "Display"]);
+        Ok(Outcome::Handled(out))
+    }
+
+    fn cmd_df(&mut self) -> Result<Outcome, String> {
+        self.set_graph(&["Store", "Display"]);
+        Ok(Outcome::Handled(format!(
+            "{} / {} objects",
+            self.store.object_count(),
+            Store::object_limit()
+        )))
+    }
+
+    fn cmd_basename(&mut self, args: &[String]) -> Result<Outcome, String> {
+        let spec = one_name(args, "basename")?;
+        let name = spec.rsplit('/').next().unwrap_or(spec);
+        self.set_graph(&["Basename", "Display"]);
+        Ok(Outcome::Handled(name.to_string()))
+    }
+
+    fn cmd_dirname(&mut self, args: &[String]) -> Result<Outcome, String> {
+        let spec = one_name(args, "dirname")?;
+        let out = match spec.rsplit_once('/') {
+            Some(("", _)) => "/",
+            Some((d, _)) => d,
+            None => ".",
+        };
+        self.set_graph(&["Dirname", "Display"]);
+        Ok(Outcome::Handled(out.to_string()))
+    }
+
+    fn cmd_realpath(&mut self, args: &[String]) -> Result<Outcome, String> {
+        let spec = args.first().map(String::as_str).unwrap_or(".");
+        let look = self.store.look(&self.cwd, spec).map_err(err)?;
+        let path = match look {
+            Look::Tree(c) => Store::pwd(&c),
+            Look::Blob { parent, name, .. } => {
+                let mut p = Store::pwd(&parent);
+                if p != "/" {
+                    p.push('/');
+                }
+                p.push_str(&name);
+                p
+            }
+        };
+        self.set_graph(&["RenderPath", "Display"]);
+        Ok(Outcome::Handled(path))
+    }
+
+    fn cmd_test(&mut self, args: &[String], bracket: bool) -> Result<Outcome, String> {
+        let args = if bracket {
+            if args.last().map(String::as_str) != Some("]") {
+                return Err("[: missing ]".to_string());
+            }
+            &args[..args.len() - 1]
+        } else {
+            args
+        };
+        let ok = match args {
+            [op, name] if op == "-e" => self.store.look(&self.cwd, name).is_ok(),
+            [op, name] if op == "-f" => matches!(self.store.look(&self.cwd, name), Ok(Look::Blob { .. })),
+            [op, name] if op == "-d" => matches!(self.store.look(&self.cwd, name), Ok(Look::Tree(_))),
+            [op, s] if op == "-z" => s.is_empty(),
+            [op, s] if op == "-n" => !s.is_empty(),
+            [a, op, b] if op == "=" || op == "==" => a == b,
+            [a, op, b] if op == "!=" => a != b,
+            _ => return Err("usage: test -e|-f|-d|-z|-n name  or  test a = b".to_string()),
+        };
+        if ok {
+            Ok(Outcome::Handled(String::new()))
+        } else {
+            Err("false".to_string())
+        }
+    }
+
+    fn cmd_alias(&mut self, args: &[String]) -> Result<Outcome, String> {
+        if args.is_empty() {
+            let mut out = String::new();
+            for (k, v) in &self.aliases {
+                if !out.is_empty() {
+                    out.push('\n');
+                }
+                out.push_str(&format!("alias {}='{}'", k, v));
+            }
+            return Ok(Outcome::Handled(out));
+        }
+        let spec = join_words(args);
+        if let Some((name, val)) = spec.split_once('=') {
+            let val = val.trim_matches('\'').trim_matches('"').to_string();
+            self.aliases.insert(name.trim().to_string(), val);
+            return Ok(Outcome::Handled(String::new()));
+        }
+        Err("usage: alias name=command".to_string())
+    }
+
+    fn cmd_unalias(&mut self, args: &[String]) -> Result<Outcome, String> {
+        let name = one_name(args, "unalias")?;
+        self.aliases.remove(name);
+        Ok(Outcome::Handled(String::new()))
+    }
+
+    fn cmd_type(&mut self, args: &[String]) -> Result<Outcome, String> {
+        let name = one_name(args, "type")?;
+        if let Some(exp) = self.aliases.get(name) {
+            return Ok(Outcome::Handled(format!("{} is aliased to `{}`", name, exp)));
+        }
+        let meaning = command_meaning(name);
+        Ok(Outcome::Handled(format!("{} is {}", name, meaning)))
+    }
+
+    fn cmd_pushd(&mut self, args: &[String]) -> Result<Outcome, String> {
+        self.dirstack.push(self.cwd.clone());
+        if !args.is_empty() {
+            self.cwd = self.store.enter(&self.cwd, &args[0]).map_err(err)?;
+        }
+        self.cmd_dirs()
+    }
+
+    fn cmd_popd(&mut self) -> Result<Outcome, String> {
+        self.cwd = self.dirstack.pop().ok_or("dir stack empty")?;
+        self.cmd_dirs()
+    }
+
+    fn cmd_dirs(&mut self) -> Result<Outcome, String> {
+        let mut out = Store::pwd(&self.cwd);
+        for c in self.dirstack.iter().rev() {
+            out.push(' ');
+            out.push_str(&Store::pwd(c));
+        }
+        self.set_graph(&["DirStack", "Display"]);
+        Ok(Outcome::Handled(out))
+    }
+
+    fn cmd_export(&mut self, args: &[String]) -> Result<Outcome, String> {
+        if args.is_empty() {
+            return self.cmd_env();
+        }
+        let spec = join_words(args);
+        if let Some((k, v)) = spec.split_once('=') {
+            self.env.insert(k.trim().to_string(), v.trim_matches('"').trim_matches('\'').to_string());
+            return Ok(Outcome::Handled(String::new()));
+        }
+        Err("usage: export NAME=value".to_string())
+    }
+
+    fn cmd_unset(&mut self, args: &[String]) -> Result<Outcome, String> {
+        let name = one_name(args, "unset")?;
+        self.env.remove(name);
+        Ok(Outcome::Handled(String::new()))
+    }
+
+    fn cmd_env(&mut self) -> Result<Outcome, String> {
+        let mut out = String::new();
+        for (k, v) in &self.env {
+            if !out.is_empty() {
+                out.push('\n');
+            }
+            out.push_str(&format!("{}={}", k, v));
+        }
+        Ok(Outcome::Handled(out))
+    }
+
+    fn sync_cwd(&mut self) {
+        let _ = self.store.refresh(&mut self.cwd);
+    }
+
+    fn read_text(&self, spec: &str) -> Result<String, String> {
+        match self.store.look(&self.cwd, spec).map_err(err)? {
+            Look::Blob { parent, name, .. } => {
+                let blob = self.store.read_file(&parent, &name).map_err(err)?;
+                core::str::from_utf8(&blob.bytes)
+                    .map(|s| s.to_string())
+                    .map_err(|_| "not text".to_string())
+            }
+            Look::Tree(_) => Err("not a blob".to_string()),
+        }
+    }
+
     fn set_graph(&mut self, labels: &[&str]) {
         self.last_graph = labels
             .iter()
@@ -437,6 +1010,104 @@ fn pipeline_inputs(tokens: &[String]) -> Vec<String> {
     match stage.first().map(String::as_str) {
         Some("cat") if stage.len() == 2 => alloc::vec![stage[1].clone()],
         _ => Vec::new(),
+    }
+}
+
+fn take_flags(args: &[String]) -> (Vec<String>, Vec<String>) {
+    let mut flags = Vec::new();
+    let mut rest = Vec::new();
+    for a in args {
+        if a.starts_with('-') && a.len() > 1 && !a.as_bytes()[1].is_ascii_digit() {
+            flags.push(a.clone());
+        } else {
+            rest.push(a.clone());
+        }
+    }
+    (flags, rest)
+}
+
+fn expand_vars(tokens: Vec<String>, env: &BTreeMap<String, String>) -> Vec<String> {
+    tokens
+        .into_iter()
+        .map(|t| {
+            if let Some(name) = t.strip_prefix('$') {
+                if name.is_empty() {
+                    t
+                } else {
+                    env.get(name).cloned().unwrap_or_default()
+                }
+            } else {
+                t
+            }
+        })
+        .collect()
+}
+
+fn parent_cap(store: &Store, cwd: &TreeCap, path: &[String]) -> Result<TreeCap, String> {
+    if path.is_empty() {
+        return Err("cannot remove /".to_string());
+    }
+    if path.len() == 1 {
+        return store.enter(cwd, "/").map_err(err);
+    }
+    let mut spec = String::from("/");
+    spec.push_str(&path[..path.len() - 1].join("/"));
+    store.enter(cwd, &spec).map_err(err)
+}
+
+fn leaf_parent(store: &Store, cwd: &TreeCap, spec: &str) -> Result<(TreeCap, String), String> {
+    match store.look(cwd, spec) {
+        Ok(Look::Blob { parent, name, .. }) => Ok((parent, name)),
+        Ok(Look::Tree(t)) => {
+            let name = t.path.last().cloned().ok_or_else(|| "bad path".to_string())?;
+            let parent = parent_cap(store, cwd, &t.path)?;
+            Ok((parent, name))
+        }
+        Err(_) => {
+            if let Some((dir, name)) = spec.rsplit_once('/') {
+                match store.look(cwd, dir) {
+                    Ok(Look::Tree(c)) => Ok((c, name.to_string())),
+                    _ => Err("no such name".to_string()),
+                }
+            } else {
+                Ok((cwd.clone(), spec.to_string()))
+            }
+        }
+    }
+}
+
+fn glob_match(name: &str, pat: &str) -> bool {
+    if pat == "*" {
+        return true;
+    }
+    if let Some(suf) = pat.strip_prefix('*') {
+        return name.ends_with(suf);
+    }
+    if let Some(pre) = pat.strip_suffix('*') {
+        return name.starts_with(pre);
+    }
+    name == pat
+}
+
+fn command_meaning(name: &str) -> &'static str {
+    match name {
+        "ls" => "a projection of the current tree",
+        "cd" => "a change of tree capability",
+        "cat" | "less" | "more" => "resolve → value → display",
+        "cp" | "ln" => "a new binding of the same value",
+        "mv" => "a rebind",
+        "rm" | "rmdir" => "remove a binding",
+        "echo" | "printf" => "create a value",
+        "mkdir" => "bind an empty tree",
+        "touch" => "bind an empty blob",
+        "graph" => "the last transform chain",
+        "why" | "explain" => "provenance of a name",
+        "pwd" => "the path projection of the current tree cap",
+        "head" | "tail" | "wc" | "grep" | "sort" | "uniq" | "cut" | "tr" => {
+            "a transform over a value"
+        }
+        "test" | "[" => "a predicate over names/values",
+        _ => "not a known transform",
     }
 }
 
@@ -506,9 +1177,10 @@ mod tests {
     use super::*;
 
     fn handled(s: &mut Session, line: &str) -> String {
-        match s.eval(line).unwrap() {
-            Outcome::Handled(t) => t,
-            Outcome::Unknown => panic!("unknown: {line}"),
+        match s.eval(line) {
+            Ok(Outcome::Handled(t)) => t,
+            Ok(Outcome::Unknown) => panic!("unknown: {line}"),
+            Err(e) => panic!("{line} => {e}"),
         }
     }
 
@@ -615,5 +1287,35 @@ mod tests {
         assert!(e.contains("reproducible: yes"), "{e}");
         assert!(e.contains("write"), "{e}");
         assert!(e.contains("type: text/plain"), "{e}");
+    }
+
+    #[test]
+    fn top_bash_commands() {
+        let mut s = Session::new();
+        handled(&mut s, "touch a");
+        assert_eq!(handled(&mut s, "cat a"), "");
+        handled(&mut s, "echo \"one\\ntwo\\nthree\\nfour\" > nums");
+        assert_eq!(handled(&mut s, "head -n 2 nums"), "one\ntwo");
+        assert_eq!(handled(&mut s, "tail -n 1 nums"), "four");
+        assert_eq!(handled(&mut s, "wc -l nums"), "4");
+        assert_eq!(handled(&mut s, "seq 3"), "1\n2\n3");
+        handled(&mut s, "mkdir -p p/q");
+        assert_eq!(handled(&mut s, "realpath p/q"), "/p/q");
+        assert_eq!(handled(&mut s, "basename p/q"), "q");
+        assert_eq!(handled(&mut s, "dirname p/q"), "p");
+        handled(&mut s, "export FOO=bar");
+        assert_eq!(handled(&mut s, "echo $FOO"), "bar");
+        assert_eq!(handled(&mut s, "test -f a"), "");
+        assert!(s.eval("test -d a").is_err());
+        handled(&mut s, "alias ll=ls");
+        let t = handled(&mut s, "type ll");
+        assert!(t.contains("aliased"), "{t}");
+        let tr = handled(&mut s, "tree");
+        assert!(tr.contains("p/") || tr.contains("q"), "{tr}");
+        let df = handled(&mut s, "df");
+        assert!(df.contains("objects"), "{df}");
+        handled(&mut s, "echo \"a,b\\nc,d\" > t.csv");
+        assert_eq!(handled(&mut s, "cut -d , -f 2 t.csv"), "b\nd");
+        assert_eq!(handled(&mut s, "cat nums | tr o 0"), "0ne\ntw0\nthree\nf0ur");
     }
 }

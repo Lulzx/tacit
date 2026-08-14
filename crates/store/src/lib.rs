@@ -97,6 +97,7 @@ pub enum Error {
     EmptyName,
     Limit,
     NothingToUndo,
+    NotEmpty,
 }
 
 pub struct Store {
@@ -333,6 +334,148 @@ impl Store {
         let key = abs_path(&cap.path, name);
         Ok(self.provs.get(&key).and_then(|v| v.last()))
     }
+
+    pub fn object_limit() -> usize {
+        MAX_OBJECTS
+    }
+
+    pub fn look(&self, cap: &TreeCap, spec: &str) -> Result<Look, Error> {
+        self.require(cap, RIGHT_READ)?;
+        let path = join_path(&cap.path, spec)?;
+        if path.is_empty() {
+            return Ok(Look::Tree(TreeCap {
+                object_id: self.root,
+                rights: cap.rights,
+                path: Vec::new(),
+            }));
+        }
+        if let Ok(id) = self.resolve_tree(&path) {
+            return Ok(Look::Tree(TreeCap { object_id: id, rights: cap.rights, path }));
+        }
+        let name = path[path.len() - 1].clone();
+        let parent_path = path[..path.len() - 1].to_vec();
+        let parent_id = self.resolve_tree(&parent_path)?;
+        let parent = TreeCap { object_id: parent_id, rights: cap.rights, path: parent_path };
+        let (hash, kind) = self.lookup(&parent, &name)?;
+        match kind {
+            Kind::Blob => Ok(Look::Blob { parent, name, hash }),
+            Kind::Tree => Ok(Look::Tree(TreeCap {
+                object_id: hash,
+                rights: cap.rights,
+                path: {
+                    let mut p = parent.path;
+                    p.push(name);
+                    p
+                },
+            })),
+        }
+    }
+
+    pub fn touch(&mut self, cap: &mut TreeCap, name: &str) -> Result<Hash, Error> {
+        self.require(cap, RIGHT_WRITE)?;
+        check_name(name)?;
+        match self.lookup(cap, name) {
+            Ok((id, Kind::Blob)) => Ok(id),
+            Ok((_, Kind::Tree)) => Err(Error::Exists),
+            Err(Error::NotFound) => self.write_file(cap, name, b"", "text/plain"),
+            Err(e) => Err(e),
+        }
+    }
+
+    pub fn rmdir(&mut self, cap: &mut TreeCap, name: &str) -> Result<(), Error> {
+        self.require(cap, RIGHT_WRITE)?;
+        check_name(name)?;
+        let (id, kind) = self.lookup(cap, name)?;
+        if kind != Kind::Tree {
+            return Err(Error::NotTree);
+        }
+        if !self.tree(id)?.entries.is_empty() {
+            return Err(Error::NotEmpty);
+        }
+        self.remove(cap, name)
+    }
+
+    pub fn mkdir_p(&mut self, cap: &mut TreeCap, spec: &str) -> Result<(), Error> {
+        self.require(cap, RIGHT_WRITE)?;
+        let path = join_path(&cap.path, spec)?;
+        let mut cur = Vec::new();
+        for name in &path {
+            let parent_id = self.resolve_tree(&cur)?;
+            let mut parent = TreeCap { object_id: parent_id, rights: cap.rights, path: cur.clone() };
+            match self.lookup(&parent, name) {
+                Ok((_, Kind::Tree)) => {}
+                Ok((_, Kind::Blob)) => return Err(Error::Exists),
+                Err(Error::NotFound) => {
+                    self.mkdir(&mut parent, name)?;
+                }
+                Err(e) => return Err(e),
+            }
+            cur.push(name.clone());
+        }
+        Ok(())
+    }
+
+    pub fn walk(&self, cap: &TreeCap) -> Result<Vec<WalkEnt>, Error> {
+        self.require(cap, RIGHT_READ)?;
+        let mut out = Vec::new();
+        self.walk_into(cap.object_id, "", &mut out)?;
+        Ok(out)
+    }
+
+    fn walk_into(&self, id: Hash, prefix: &str, out: &mut Vec<WalkEnt>) -> Result<(), Error> {
+        let t = self.tree(id)?;
+        for (name, e) in &t.entries {
+            let path = if prefix.is_empty() {
+                name.clone()
+            } else {
+                let mut p = String::from(prefix);
+                p.push('/');
+                p.push_str(name);
+                p
+            };
+            let size = match e.kind {
+                Kind::Blob => match self.objects.get(&e.hash) {
+                    Some(Object::Blob(b)) => b.bytes.len(),
+                    _ => 0,
+                },
+                Kind::Tree => match self.objects.get(&e.hash) {
+                    Some(Object::Tree(t)) => t.entries.len(),
+                    _ => 0,
+                },
+            };
+            out.push(WalkEnt { path: path.clone(), kind: e.kind, hash: e.hash, size });
+            if e.kind == Kind::Tree {
+                self.walk_into(e.hash, &path, out)?;
+            }
+        }
+        Ok(())
+    }
+
+    pub fn refresh(&self, cap: &mut TreeCap) -> Result<(), Error> {
+        cap.object_id = self.resolve_tree(&cap.path)?;
+        Ok(())
+    }
+
+    pub fn blob_len(&self, id: Hash) -> Option<usize> {
+        match self.objects.get(&id) {
+            Some(Object::Blob(b)) => Some(b.bytes.len()),
+            _ => None,
+        }
+    }
+}
+
+/// Result of resolving a path projection.
+pub enum Look {
+    Tree(TreeCap),
+    Blob { parent: TreeCap, name: String, hash: Hash },
+}
+
+#[derive(Clone, Debug)]
+pub struct WalkEnt {
+    pub path: String,
+    pub kind: Kind,
+    pub hash: Hash,
+    pub size: usize,
 }
 
 impl Store {
@@ -481,6 +624,7 @@ impl Error {
             Error::EmptyName => "empty name",
             Error::Limit => "store limit",
             Error::NothingToUndo => "nothing to undo",
+            Error::NotEmpty => "tree not empty",
         }
     }
 }

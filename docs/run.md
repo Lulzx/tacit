@@ -118,9 +118,10 @@ history and undo are Ref operations, not sector rewrites. There is no
 `open`, `fd`, or `seek`.
 
 Then the guest drops into an interactive **Tacit shell** (`tacit>`). Familiar
-commands (`pwd`, `ls`, `cd`, `cat`, `echo`, `mkdir`, `cp`, `mv`, `rm`,
-`history`, `undo`, `inspect`, `graph`, `clear`) are sugar for transforms
-over the current tree capability. A line that is not a store command is
+bash commands are sugar for transforms over the current tree capability
+(`pwd`, `ls`, `cd`, `cat`, `echo`, `mkdir`, `cp`, `ln`, `mv`, `rm`,
+`touch`, `head`, `tail`, `wc`, `find`, `tree`, `test`, …). `type ls` prints
+the Tacit meaning. Process-only commands (`ps`, `kill`, `sudo`) are refused. A line that is not a store command is
 compiled to UIR with the *same* compiler source as the host
 (`crates/compile`) and stepped on the boot CPU. Bindings are values —
 `A ← [1 2 3]` snapshots the result, so later lines can reference `A` as a

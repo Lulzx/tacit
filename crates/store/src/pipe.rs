@@ -17,8 +17,8 @@ pub enum PipeVal {
 }
 
 pub fn run(
-    store: &Store,
-    cwd: &TreeCap,
+    store: &mut Store,
+    cwd: &mut TreeCap,
     tokens: &[String],
 ) -> Result<(String, Vec<GraphNode>, Option<String>), String> {
     let (stages, dest) = split_stages(tokens)?;
@@ -28,7 +28,7 @@ pub fn run(
     let mut graph: Vec<GraphNode> = Vec::new();
     let mut val = eval_source(store, cwd, &stages[0], &mut graph)?;
     for stage in &stages[1..] {
-        val = apply_transform(val, stage, &mut graph)?;
+        val = apply_transform(store, cwd, val, stage, &mut graph)?;
     }
     if dest.is_some() {
         graph.push(node("Bind"));
@@ -96,13 +96,18 @@ fn eval_source(
             Ok(PipeVal::Text(text))
         }
         Some("ls") => {
-            if stage.len() != 1 {
-                return Err("usage: ls".to_string());
-            }
             let kids = store.list(cwd).map_err(|e| e.as_str().to_string())?;
             graph.push(node("CurrentTree"));
             graph.push(node("Children"));
             Ok(PipeVal::Lines(kids.into_iter().map(|(n, _, _)| n).collect()))
+        }
+        Some("seq") => {
+            graph.push(node("Seq"));
+            Ok(PipeVal::Lines(seq_lines(&stage[1..])?))
+        }
+        Some("printf") => {
+            graph.push(node("Printf"));
+            Ok(PipeVal::Text(printf_fmt(&stage[1..])?))
         }
         Some(other) => Err(format!("not a source: {}", other)),
         None => Err("empty pipeline stage".to_string()),
@@ -110,6 +115,8 @@ fn eval_source(
 }
 
 fn apply_transform(
+    store: &mut Store,
+    cwd: &mut TreeCap,
     val: PipeVal,
     stage: &[String],
     graph: &mut Vec<GraphNode>,
@@ -185,10 +192,7 @@ fn apply_transform(
             let n = into_nums(val)?;
             Ok(PipeVal::Scalar(n.iter().copied().sum()))
         }
-        "rev" | "reverse" => {
-            if stage.len() != 1 {
-                return Err("usage: rev".to_string());
-            }
+        "rev" | "reverse" | "tac" => {
             graph.push(node("Reverse"));
             match val {
                 PipeVal::Nums(mut n) => {
@@ -207,8 +211,201 @@ fn apply_transform(
                 PipeVal::Scalar(s) => Ok(PipeVal::Scalar(s)),
             }
         }
+        "head" => {
+            let n = flag_n(&stage[1..], 10)?;
+            graph.push(node("Head"));
+            let mut lines = into_lines(maybe_lines(val, graph));
+            lines.truncate(n);
+            Ok(PipeVal::Lines(lines))
+        }
+        "tail" => {
+            let n = flag_n(&stage[1..], 10)?;
+            graph.push(node("Tail"));
+            let lines = into_lines(maybe_lines(val, graph));
+            let start = lines.len().saturating_sub(n);
+            Ok(PipeVal::Lines(lines[start..].to_vec()))
+        }
+        "wc" => {
+            graph.push(node("Count"));
+            Ok(PipeVal::Text(wc_text(&val, &stage[1..])))
+        }
+        "nl" => {
+            graph.push(node("NumberLines"));
+            let lines = into_lines(maybe_lines(val, graph));
+            let numbered = lines
+                .iter()
+                .enumerate()
+                .map(|(i, l)| format!("{}\t{}", i + 1, l))
+                .collect();
+            Ok(PipeVal::Lines(numbered))
+        }
+        "cut" => {
+            graph.push(node("Cut"));
+            Ok(PipeVal::Lines(cut_lines(&into_lines(maybe_lines(val, graph)), &stage[1..])?))
+        }
+        "tr" => {
+            if stage.len() != 3 {
+                return Err("usage: tr <from> <to>".to_string());
+            }
+            graph.push(node("Translate"));
+            Ok(PipeVal::Text(tr_text(&format_val(&val), &stage[1], &stage[2])))
+        }
+        "tee" => {
+            if stage.len() != 2 {
+                return Err("usage: tee <name>".to_string());
+            }
+            let name = &stage[1];
+            let text = format_val(&val);
+            store
+                .write_file(cwd, name, text.as_bytes(), "text/plain")
+                .map_err(|e| e.as_str().to_string())?;
+            graph.push(node("Tee"));
+            Ok(val)
+        }
         other => Err(format!("unknown transform: {}", other)),
     }
+}
+
+pub fn seq_lines(args: &[String]) -> Result<Vec<String>, String> {
+    let nums: Result<Vec<i64>, _> = args.iter().map(|s| s.parse::<i64>()).collect();
+    let nums = nums.map_err(|_| "usage: seq [first [incr]] last".to_string())?;
+    let (mut cur, step, last) = match nums.as_slice() {
+        [last] => (1i64, 1i64, *last),
+        [first, last] => (*first, 1i64, *last),
+        [first, incr, last] => (*first, *incr, *last),
+        _ => return Err("usage: seq [first [incr]] last".to_string()),
+    };
+    if step == 0 {
+        return Err("seq: increment is 0".to_string());
+    }
+    let mut out = Vec::new();
+    if step > 0 {
+        while cur <= last {
+            out.push(format!("{}", cur));
+            cur += step;
+        }
+    } else {
+        while cur >= last {
+            out.push(format!("{}", cur));
+            cur += step;
+        }
+    }
+    Ok(out)
+}
+
+pub fn printf_fmt(args: &[String]) -> Result<String, String> {
+    if args.is_empty() {
+        return Err("usage: printf <format> [args]".to_string());
+    }
+    let fmt = unescape(&args[0]);
+    let mut vals = args[1..].iter();
+    let mut out = String::new();
+    let mut chars = fmt.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '%' {
+            match chars.next() {
+                Some('%') => out.push('%'),
+                Some('s') | Some('d') | Some('i') => {
+                    if let Some(v) = vals.next() {
+                        out.push_str(v);
+                    }
+                }
+                Some(other) => {
+                    out.push('%');
+                    out.push(other);
+                }
+                None => out.push('%'),
+            }
+        } else {
+            out.push(c);
+        }
+    }
+    Ok(out)
+}
+
+pub fn flag_n(args: &[String], default: usize) -> Result<usize, String> {
+    let mut i = 0;
+    while i < args.len() {
+        if args[i] == "-n" {
+            let n = args.get(i + 1).ok_or("usage: -n <count>")?;
+            return n.parse().map_err(|_| "bad -n count".to_string());
+        }
+        if args[i].starts_with('-') && args[i].len() > 1 && args[i].as_bytes()[1].is_ascii_digit() {
+            return args[i][1..].parse().map_err(|_| "bad count".to_string());
+        }
+        i += 1;
+    }
+    Ok(default)
+}
+
+pub fn wc_text(val: &PipeVal, flags: &[String]) -> String {
+    let text = format_val(val);
+    let lines = text.lines().count();
+    let words = text.split_whitespace().count();
+    let bytes = text.len();
+    let show_l = flags.iter().any(|f| f == "-l") || flags.is_empty();
+    let show_w = flags.iter().any(|f| f == "-w") || flags.is_empty();
+    let show_c = flags.iter().any(|f| f == "-c") || flags.is_empty();
+    let mut parts = Vec::new();
+    if show_l {
+        parts.push(format!("{}", lines));
+    }
+    if show_w {
+        parts.push(format!("{}", words));
+    }
+    if show_c {
+        parts.push(format!("{}", bytes));
+    }
+    parts.join(" ")
+}
+
+fn cut_lines(lines: &[String], args: &[String]) -> Result<Vec<String>, String> {
+    let mut delim = "\t".to_string();
+    let mut field = 1usize;
+    let mut i = 0;
+    while i < args.len() {
+        if args[i] == "-d" {
+            delim = args.get(i + 1).ok_or("usage: cut -d <delim> -f <n>")?.clone();
+            i += 2;
+            continue;
+        }
+        if args[i] == "-f" {
+            field = args
+                .get(i + 1)
+                .ok_or("usage: cut -d <delim> -f <n>")?
+                .parse()
+                .map_err(|_| "bad field".to_string())?;
+            i += 2;
+            continue;
+        }
+        i += 1;
+    }
+    if field == 0 {
+        return Err("cut: fields start at 1".to_string());
+    }
+    Ok(lines
+        .iter()
+        .map(|l| {
+            l.split(&delim)
+                .nth(field - 1)
+                .unwrap_or("")
+                .to_string()
+        })
+        .collect())
+}
+
+fn tr_text(text: &str, from: &str, to: &str) -> String {
+    let from: Vec<char> = from.chars().collect();
+    let to: Vec<char> = to.chars().collect();
+    text.chars()
+        .map(|c| {
+            if let Some(i) = from.iter().position(|x| *x == c) {
+                *to.get(i).unwrap_or(&c)
+            } else {
+                c
+            }
+        })
+        .collect()
 }
 
 fn maybe_lines(val: PipeVal, graph: &mut Vec<GraphNode>) -> PipeVal {
