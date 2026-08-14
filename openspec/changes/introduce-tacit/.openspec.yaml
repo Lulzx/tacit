@@ -1,0 +1,5 @@
+schema: spec-driven
+created: 2026-08-14
+goal: "Specify Tacit: values + transformations + capabilities + placement,
+  freestanding on QEMU, with a live graph, effects-before-commit, and a
+  speed stack. Not a Unix kernel in Uiua syntax."

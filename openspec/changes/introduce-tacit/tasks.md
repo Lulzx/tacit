@@ -33,3 +33,37 @@
 - [ ] 5.3 On a defined runtime error, show the error and keep the Realm halted or idle — no reset loop
 - [ ] 5.4 Make scheduler/grant policy Uiua compiled to UIR; inverting the documented order key changes run order without a microkernel edit
 - [ ] 5.5 Bind keyboard as an event-array source so a read-line program echoes `hi` after the operator types it
+
+## 6. Live graph and five primitives
+
+- [ ] 6.1 Document the five primitives and a one-page map from Unix nouns to derived forms or "refused"
+- [ ] 6.2 Keep the loaded UIR as the source of truth for running work (no process table)
+- [ ] 6.3 Expose a query: nodes, edges, shapes, caps, ready set, as arrays
+- [ ] 6.4 Print a console projection of the tiny program's graph (Add, Multiply, display)
+- [ ] 6.5 Answer provenance for C: producer Multiply, inputs Add-result and D
+
+## 7. Effects and one agent-shaped transform
+
+- [ ] 7.1 Classify nodes as pure or effectful with required caps
+- [ ] 7.2 Simulate a display write without changing the console; commit after validate
+- [ ] 7.3 Missing display cap leaves the console unchanged; mark whether previous console contents can be restored
+- [ ] 7.4 Provide machine tables for transforms and capabilities as arrays
+- [ ] 7.5 Run one granted transform that filters or summarizes the live graph and proposes a display write, with only the caps it needs
+- [ ] 7.6 Represent two independent summaries as fan-out nodes, even if both still run on the boot CPU
+
+## 8. Fusion (first speed number)
+
+- [ ] 8.1 Add in-image counters: payload bytes moved, payload bytes copied, kernel entries
+- [ ] 8.2 Implement a host fusion pass for single-consumer pure elementwise chains
+- [ ] 8.3 Fuse Add-then-Multiply so T = A+B is not allocated; keep a documented unfused mode
+- [ ] 8.4 Refuse to fuse across display/keyboard effects and across undocumented fan-out
+- [ ] 8.5 Ship `bench-fusion`: same C, fused bytes < unfused bytes, both printed
+
+## 9. Zero-copy send, datapath, placement
+
+- [ ] 9.1 Make immutable same-placement send a region-capability share or move; keep unique-region in-place mutation
+- [ ] 9.2 Keep an explicit copy transform as the bench control; ship `bench-send` on a documented large array
+- [ ] 9.3 Run the fused kernel as one entry (or documented tiles), not one trap per element
+- [ ] 9.4 Deliver keyboard as one array per line, not one syscall per key
+- [ ] 9.5 Record `place = host` on fused nodes; do not add a CUDA-style API
+- [ ] 9.6 Confirm the image has no POSIX file path, no listen/accept, and only the devices that milestone needs

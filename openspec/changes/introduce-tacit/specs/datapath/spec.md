@@ -20,10 +20,10 @@ A hot path that processes N independent array elements or N events MUST NOT perf
 - **AND** not one kernel entry per element
 
 ### Requirement: No kernel TCP or file datapath
-The speed-stack image MUST NOT add an in-kernel TCP stack or POSIX file datapath. If I/O beyond console and keyboard is added later, it MUST be a Realm or libOS over descriptor-ring arrays.
+The image MUST NOT add an in-kernel TCP stack or POSIX file datapath. If I/O beyond console and keyboard is added later, it MUST be a Realm or libOS over descriptor-ring arrays.
 
 #### Scenario: Image still has no listen/accept
-- **GIVEN** a built speed-stack image
+- **GIVEN** a built image that includes the fusion and cap-send benches
 - **WHEN** it is inspected
 - **THEN** there is no listen/accept TCP path and no POSIX file read path in the microkernel
 - **AND** fusion and cap-send benches still run

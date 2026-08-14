@@ -20,7 +20,7 @@ Sending an immutable array from one transform or Realm to another MUST transfer 
 - **AND** no other Realm holds a live view of the old bytes
 
 ### Requirement: Copy is explicit and counted
-When a copy is required, it MUST appear as an explicit copy transform or a documented fallback. The system MUST count payload bytes copied on the speed-stack benches.
+When a copy is required, it MUST appear as an explicit copy transform or a documented fallback. The system MUST count payload bytes copied on the fusion and cap-send benches.
 
 #### Scenario: Forced copy is visible
 - **GIVEN** a send that the implementation must copy (documented fallback)

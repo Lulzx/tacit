@@ -9,7 +9,7 @@ Every first-milestone fused kernel MUST run on host (CPU) placement. UIR MUST st
 
 #### Scenario: Fused Add-multiply runs on host
 - **GIVEN** fused `C = (A + B) × D`
-- **WHEN** the speed-stack bench runs
+- **WHEN** the fusion bench runs
 - **THEN** the kernel executes on the boot CPU or host stepper
 - **AND** the UIR node still names the transform and its shape
 

@@ -18,13 +18,9 @@ If Unix had never existed, the primitives would be values, transformations, comp
 
 Specs only. Nothing boots yet.
 
-| Change | What it is |
-| --- | --- |
-| [`introduce-uiua-os`](openspec/changes/introduce-uiua-os/) | Kernel model, QEMU boot, one Realm, tiny Uiua program |
-| [`introduce-speed-stack`](openspec/changes/introduce-speed-stack/) | Fusion, capability send, unikernel image, host placement |
-| [`introduce-combinator-os`](openspec/changes/introduce-combinator-os/) | Five primitives, live graph, effects before commit, agents as transforms |
+One change: [`introduce-tacit`](openspec/changes/introduce-tacit/). Kernel model, QEMU boot, live graph, effects before commit, agents as transforms, then fusion and capability send.
 
-Read the [proposal](openspec/changes/introduce-uiua-os/proposal.md), then the [research note](openspec/changes/introduce-uiua-os/research.md) if you care why this can be faster than Linux on array work.
+Read the [proposal](openspec/changes/introduce-tacit/proposal.md), then the [research note](openspec/changes/introduce-tacit/research.md) if you care why this can be faster than Linux on array work.
 
 ## Laws
 
