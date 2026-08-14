@@ -715,7 +715,7 @@ async function init() {
       loadAsset(appBase() + 'vendor/xterm/xterm.js', 'js'),
     ]);
     await loadAsset(appBase() + 'vendor/xterm/addon-fit.js', 'js');
-    const resp = await fetch(appBase() + 'tacit_wasm.wasm?v=5');
+    const resp = await fetch(appBase() + 'tacit_wasm.wasm?v=7');
     const { instance } = await WebAssembly.instantiate(await resp.arrayBuffer(), {});
     wasm = instance.exports;
     memory = wasm.memory;
@@ -747,8 +747,22 @@ function refreshConsoleChrome() {
 let term = null;
 let termFit = null;
 let lineBuf = '';
+let lineCur = 0;
 const cmdHist = [];
 let cmdIdx = -1;
+let tabBase = null;
+let tabList = [];
+let tabIdx = -1;
+
+const CMDS = new Set([
+  'pwd','ls','cd','cat','less','more','echo','printf','mkdir','cp','ln','mv','rm','rmdir',
+  'touch','history','undo','inspect','stat','file','why','explain','graph','help','man',
+  'neofetch','fastfetch','screenfetch','clear','head','tail','wc','nl','tac','cut','tr',
+  'tee','seq','tree','find','du','df','basename','dirname','realpath','readlink','true',
+  'false','test','exit','logout','alias','unalias','type','which','command','pushd','popd',
+  'dirs','export','set','unset','env','date','whoami','hostname','uname','parse','square',
+  'sum','grep','filter','sort','uniq','unique','lines','rev','reverse'
+]);
 
 function crlf(s) {
   return String(s).replace(/\r?\n/g, '\r\n');
@@ -764,26 +778,139 @@ function fitTerm() {
 }
 
 function writePrompt() {
-  const pwd = wasm ? (readStr('tacit_pwd') || '/') : '/';
-  termWrite('\r\n\x1b[2m' + pwd + '\x1b[0m \x1b[38;2;196;120;74mtacit>\x1b[0m ');
   lineBuf = '';
+  lineCur = 0;
+  tabBase = null;
+  tabList = [];
+  tabIdx = -1;
+  termWrite('\r\n');
+  paintLine();
+}
+
+function historyHint() {
+  if (!lineBuf || lineCur !== lineBuf.length) return '';
+  for (let i = cmdHist.length - 1; i >= 0; i--) {
+    if (cmdHist[i].startsWith(lineBuf) && cmdHist[i].length > lineBuf.length) {
+      return cmdHist[i].slice(lineBuf.length);
+    }
+  }
+  return '';
+}
+
+function colorizeLine(s) {
+  let out = '';
+  let i = 0;
+  let stage = true;
+  while (i < s.length) {
+    const ch = s[i];
+    if (ch === ' ') { out += ch; i++; continue; }
+    if (ch === '|' || ch === '>') {
+      out += '\x1b[38;2;196;120;74m' + ch + '\x1b[0m';
+      i++;
+      stage = true;
+      continue;
+    }
+    if (ch === '"' || ch === "'") {
+      let j = i + 1;
+      while (j < s.length && s[j] !== ch) j++;
+      if (j < s.length) j++;
+      out += '\x1b[38;2;201;162;90m' + s.slice(i, j) + '\x1b[0m';
+      i = j;
+      stage = false;
+      continue;
+    }
+    if (ch === '#') {
+      out += '\x1b[2m' + s.slice(i) + '\x1b[0m';
+      break;
+    }
+    let j = i;
+    while (j < s.length && !' |>'.includes(s[j]) && s[j] !== '"' && s[j] !== "'") j++;
+    const tok = s.slice(i, j);
+    if (tok.startsWith('-') && tok.length > 1) {
+      out += '\x1b[38;2;122;107;143m' + tok + '\x1b[0m';
+    } else if (stage) {
+      const uiua = tok.length && !/^[A-Za-z_]/.test(tok);
+      if (uiua) out += '\x1b[38;2;201;162;90m' + tok + '\x1b[0m';
+      else if (CMDS.has(tok)) out += '\x1b[38;2;63;122;104m' + tok + '\x1b[0m';
+      else out += '\x1b[38;2;196;92;66m' + tok + '\x1b[0m';
+      stage = false;
+    } else {
+      out += tok;
+    }
+    i = j;
+  }
+  return out;
+}
+
+function paintLine() {
+  if (!term) return;
+  const pwd = wasm ? (readStr('tacit_pwd') || '/') : '/';
+  const hint = historyHint();
+  const dim = hint ? '\x1b[2m' + hint + '\x1b[0m' : '';
+  term.write('\r\x1b[2m' + pwd + '\x1b[0m \x1b[38;2;196;120;74mtacit>\x1b[0m ' + colorizeLine(lineBuf) + dim + '\x1b[K');
+  const back = hint.length + (lineBuf.length - lineCur);
+  if (back > 0) term.write('\x1b[' + back + 'D');
+}
+
+function fetchComplete(line) {
+  if (!wasm) return [];
+  const raw = call('tacit_complete', enc.encode(line));
+  if (!raw || !raw.length) return [];
+  return dec.decode(raw).split('\n').filter(Boolean);
+}
+
+function applyToken(base, next) {
+  let i = base.length - 1;
+  while (i >= 0 && !' \t|>'.includes(base[i])) i--;
+  return base.slice(0, i + 1) + next;
+}
+
+function acceptHint() {
+  const hint = historyHint();
+  if (!hint) return false;
+  lineBuf += hint;
+  lineCur = lineBuf.length;
+  tabBase = null;
+  paintLine();
+  return true;
+}
+
+function doTab() {
+  if (tabBase === null) {
+    tabBase = lineBuf;
+    tabList = fetchComplete(lineBuf);
+    tabIdx = -1;
+  }
+  if (!tabList.length) {
+    acceptHint();
+    return;
+  }
+  tabIdx = (tabIdx + 1) % tabList.length;
+  lineBuf = applyToken(tabBase, tabList[tabIdx]);
+  lineCur = lineBuf.length;
+  paintLine();
 }
 
 function writeBanner() {
   const art = [
     '\x1b[38;2;196;120;74m',
-    '  #####   ##    ####  ##### #####',
-    '    #    #  #  #        #     #',
-    '    #   ###### #        #     #',
-    '    #   #    # #        #     #',
-    '    #   #    #  ####    #     #',
+    ' _________  ________  ________  ___  _________   ',
+    '|\\___   ___\\\\   __  \\|\\   ____\\|\\  \\|\\___   ___\\ ',
+    '\\|___ \\  \\_\\ \\  \\|\\  \\ \\  \\___|\\ \\  \\|___ \\  \\_| ',
+    '     \\ \\  \\ \\ \\   __  \\ \\  \\    \\ \\  \\   \\ \\  \\  ',
+    '      \\ \\  \\ \\ \\  \\ \\  \\ \\  \\____\\ \\  \\   \\ \\  \\ ',
+    '       \\ \\__\\ \\ \\__\\ \\__\\ \\_______\\ \\__\\   \\ \\__\\',
+    '        \\|__|  \\|__|\\|__|\\|_______|\\|__|    \\|__|',
     '\x1b[0m',
     '\x1b[2m',
-    '  nav    pwd ls cd pushd popd dirs tree find',
-    '  names  cat echo printf touch mkdir cp ln mv rm rmdir',
-    '  text   head tail wc nl tac cut tr tee seq grep sort uniq',
-    '  meta   history undo inspect stat why explain graph help',
-    '  shell  alias type env export test true false clear',
+    '  nav    pwd ls cd pushd popd dirs tree find du df',
+    '  names  cat less more echo printf touch mkdir cp ln mv rm rmdir',
+    '  path   basename dirname realpath readlink',
+    '  text   head tail wc nl tac cut tr tee seq grep filter sort uniq unique',
+    '  pipe   parse square sum lines rev reverse',
+    '  meta   history undo inspect stat file why explain graph help man neofetch',
+    '  shell  alias unalias type which command env export set unset',
+    '  more   test true false clear date whoami hostname uname exit',
     '',
     '  cat n | parse | square | sum',
     '\x1b[0m'
@@ -792,9 +919,10 @@ function writeBanner() {
 }
 
 function replaceLine(next) {
-  if (lineBuf.length) term.write('\b \b'.repeat(lineBuf.length));
   lineBuf = next;
-  if (lineBuf) term.write(lineBuf);
+  lineCur = lineBuf.length;
+  tabBase = null;
+  paintLine();
 }
 
 function bootConsole() {
@@ -856,13 +984,21 @@ function onTermData(data) {
   if (data === '\r') {
     const src = lineBuf;
     lineBuf = '';
+    lineCur = 0;
+    tabBase = null;
     runConsoleLine(src);
     return;
   }
+  if (data === '\t') {
+    doTab();
+    return;
+  }
   if (data === '\u007f') {
-    if (lineBuf.length) {
-      lineBuf = lineBuf.slice(0, -1);
-      term.write('\b \b');
+    if (lineCur > 0) {
+      lineBuf = lineBuf.slice(0, lineCur - 1) + lineBuf.slice(lineCur);
+      lineCur--;
+      tabBase = null;
+      paintLine();
     }
     return;
   }
@@ -871,13 +1007,31 @@ function onTermData(data) {
     writePrompt();
     return;
   }
-  if (data === '\u001b[A') {
+  if (data === '\u0001' || data === '\u001b[H' || data === '\u001b[1~') {
+    lineCur = 0;
+    paintLine();
+    return;
+  }
+  if (data === '\u0005' || data === '\u001b[F' || data === '\u001b[4~') {
+    lineCur = lineBuf.length;
+    paintLine();
+    return;
+  }
+  if (data === '\u001b[3~') {
+    if (lineCur < lineBuf.length) {
+      lineBuf = lineBuf.slice(0, lineCur) + lineBuf.slice(lineCur + 1);
+      tabBase = null;
+      paintLine();
+    }
+    return;
+  }
+  if (data === '\u001b[A' || data === '\u001bOA') {
     if (!cmdHist.length) return;
     cmdIdx = Math.max(0, cmdIdx - 1);
     replaceLine(cmdHist[cmdIdx]);
     return;
   }
-  if (data === '\u001b[B') {
+  if (data === '\u001b[B' || data === '\u001bOB') {
     if (cmdIdx < cmdHist.length - 1) {
       cmdIdx += 1;
       replaceLine(cmdHist[cmdIdx]);
@@ -887,9 +1041,34 @@ function onTermData(data) {
     }
     return;
   }
-  if (data === '\t' || data.charCodeAt(0) < 32) return;
-  lineBuf += data;
-  term.write(data);
+  if (data === '\u001b[C' || data === '\u001bOC') {
+    if (lineCur < lineBuf.length) {
+      lineCur++;
+      paintLine();
+      return;
+    }
+    if (acceptHint()) return;
+    const one = fetchComplete(lineBuf);
+    if (one.length === 1) {
+      lineBuf = applyToken(lineBuf, one[0]);
+      lineCur = lineBuf.length;
+      tabBase = null;
+      paintLine();
+    }
+    return;
+  }
+  if (data === '\u001b[D' || data === '\u001bOD') {
+    if (lineCur > 0) {
+      lineCur--;
+      paintLine();
+    }
+    return;
+  }
+  if (data.charCodeAt(0) < 32) return;
+  lineBuf = lineBuf.slice(0, lineCur) + data + lineBuf.slice(lineCur);
+  lineCur += data.length;
+  tabBase = null;
+  paintLine();
 }
 
 function runConsoleLine(src) {

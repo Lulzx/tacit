@@ -371,6 +371,17 @@ pub extern "C" fn tacit_pwd(out_len: *mut usize) -> *mut u8 {
     leak_vec(console::pwd().into_bytes(), out_len)
 }
 
+/// Completions for the last token, one per line.
+#[no_mangle]
+pub extern "C" fn tacit_complete(src_ptr: *const u8, src_len: usize, out_len: *mut usize) -> *mut u8 {
+    if src_ptr.is_null() || out_len.is_null() {
+        return std::ptr::null_mut();
+    }
+    let src = unsafe { std::slice::from_raw_parts(src_ptr, src_len) };
+    let src = String::from_utf8_lossy(src);
+    leak_vec(console::complete(&src).into_bytes(), out_len)
+}
+
 /// Reset the console namespace and Uiua bindings.
 #[no_mangle]
 pub extern "C" fn tacit_reset() {

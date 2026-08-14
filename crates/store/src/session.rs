@@ -94,6 +94,7 @@ impl Session {
             "explain" => self.cmd_explain(&tokens[1..]),
             "graph" => self.cmd_graph(),
             "help" | "man" => self.cmd_help(),
+            "neofetch" | "fastfetch" | "screenfetch" => self.cmd_neofetch(),
             "clear" => Ok(Outcome::Handled("\x0c".to_string())),
             "head" => self.cmd_head_tail(&tokens[1..], true),
             "tail" => self.cmd_head_tail(&tokens[1..], false),
@@ -364,12 +365,14 @@ impl Session {
 
     fn cmd_help(&mut self) -> Result<Outcome, String> {
         Ok(Outcome::Handled(
-            "nav     pwd ls cd pushd popd dirs tree find\n\
-             names   cat echo printf touch mkdir cp ln mv rm rmdir\n\
-             text    head tail wc nl tac cut tr tee seq grep sort uniq\n\
-             meta    history undo inspect stat why explain graph help\n\
-             shell   alias type env export test true false clear\n\
-             date, whoami, and uname print Tacit facts, not the host's"
+            "nav     pwd ls cd pushd popd dirs tree find du df\n\
+             names   cat less more echo printf touch mkdir cp ln mv rm rmdir\n\
+             path    basename dirname realpath readlink\n\
+             text    head tail wc nl tac cut tr tee seq grep filter sort uniq unique\n\
+             pipe    parse square sum lines rev reverse\n\
+             meta    history undo inspect stat file why explain graph help man neofetch\n\
+             shell   alias unalias type which command env export set unset\n\
+             more    test true false clear date whoami hostname uname exit"
                 .to_string(),
         ))
     }
@@ -380,6 +383,59 @@ impl Session {
 
     pub fn graph_text(&self) -> String {
         render_graph(&self.last_graph)
+    }
+
+    /// Completions for the last token of `line`.  Commands after `|`/`>`,
+    /// names from the current tree otherwise.
+    pub fn complete(&self, line: &str) -> Vec<String> {
+        let (prefix, want_cmd) = complete_prefix(line);
+        let mut out = Vec::new();
+        if want_cmd {
+            for c in COMMANDS {
+                if c.starts_with(prefix) {
+                    out.push((*c).to_string());
+                }
+            }
+            for a in self.aliases.keys() {
+                if a.starts_with(prefix) && !out.iter().any(|x| x == a) {
+                    out.push(a.clone());
+                }
+            }
+        }
+        out.extend(self.complete_names(prefix));
+        out.sort();
+        out.dedup();
+        out
+    }
+
+    fn complete_names(&self, prefix: &str) -> Vec<String> {
+        let (dir, pre) = match prefix.rfind('/') {
+            Some(i) => (&prefix[..=i], &prefix[i + 1..]),
+            None => ("", prefix),
+        };
+        let cap = if dir.is_empty() {
+            self.cwd.clone()
+        } else {
+            match self.store.look(&self.cwd, dir.trim_end_matches('/')) {
+                Ok(Look::Tree(c)) => c,
+                _ => return Vec::new(),
+            }
+        };
+        let Ok(kids) = self.store.list(&cap) else {
+            return Vec::new();
+        };
+        let mut out = Vec::new();
+        for (name, kind, _) in kids {
+            if name.starts_with(pre) {
+                let mut s = String::from(dir);
+                s.push_str(&name);
+                if kind == Kind::Tree {
+                    s.push('/');
+                }
+                out.push(s);
+            }
+        }
+        out
     }
 
     fn eval_pipeline(&mut self, tokens: &[String]) -> Result<Outcome, String> {
@@ -776,6 +832,69 @@ impl Session {
         Ok(Outcome::Handled(out))
     }
 
+    fn cmd_neofetch(&mut self) -> Result<Outcome, String> {
+        let term_name = if cfg!(target_arch = "wasm32") {
+            "xterm.js"
+        } else if cfg!(target_os = "none") {
+            "uart"
+        } else {
+            "ghostty"
+        };
+        let user = "shell";
+        let host = "tacit";
+        let title = format!("{user}@{host}");
+        let bar: String = core::iter::repeat('-').take(title.len()).collect();
+        let info = [
+            format!("\x1b[1;32m{user}\x1b[0m@\x1b[1;32m{host}\x1b[0m"),
+            format!("\x1b[2m{bar}\x1b[0m"),
+            nf_kv("OS", "Tacit"),
+            nf_kv("Host", "Mac16,8"),
+            nf_kv("Kernel", "UIR"),
+            nf_kv("Uptime", "this session"),
+            nf_kv(
+                "Packages",
+                &format!("{} (store)", self.store.object_count()),
+            ),
+            nf_kv("Shell", "tacit"),
+            nf_kv("Resolution", "1512x982"),
+            nf_kv("DE", "Aqua"),
+            nf_kv("WM", "Quartz Compositor"),
+            nf_kv("WM Theme", "Blue (Light)"),
+            nf_kv("Terminal", term_name),
+            nf_kv("CPU", "Apple M4 Pro"),
+            nf_kv("GPU", "Apple M4 Pro"),
+            nf_kv(
+                "Memory",
+                &format!(
+                    "{} / {} objects",
+                    self.store.object_count(),
+                    Store::object_limit()
+                ),
+            ),
+        ];
+        let pad = NF_LOGO.iter().map(|s| s.chars().count()).max().unwrap_or(0) + 4;
+        let rows = NF_LOGO.len().max(info.len());
+        let mut out = String::new();
+        for i in 0..rows {
+            if i > 0 {
+                out.push('\n');
+            }
+            let raw = if i < NF_LOGO.len() { NF_LOGO[i] } else { "" };
+            let mut left = String::from(raw);
+            while left.chars().count() < pad {
+                left.push(' ');
+            }
+            out.push_str("\x1b[32m");
+            out.push_str(&left);
+            out.push_str("\x1b[0m");
+            if i < info.len() {
+                out.push_str(&info[i]);
+            }
+        }
+        self.set_graph(&["Machine", "Store", "Display"]);
+        Ok(Outcome::Handled(out))
+    }
+
     fn cmd_df(&mut self) -> Result<Outcome, String> {
         self.set_graph(&["Store", "Display"]);
         Ok(Outcome::Handled(format!(
@@ -964,6 +1083,56 @@ impl Default for Session {
     }
 }
 
+const NF_LOGO: &[&str] = &[
+    r#"                    'c."#,
+    r#"                 ,xNMM."#,
+    r#"               .OMMMMo"#,
+    r#"               OMMM0,"#,
+    r#"     .;loddo:' loolloddol;."#,
+    r#"   cKMMMMMMMMMMNWMMMMMMMMMM0:"#,
+    r#" .KMMMMMMMMMMMMMMMMMMMMMMMWd."#,
+    r#" XMMMMMMMMMMMMMMMMMMMMMMMX."#,
+    r#";MMMMMMMMMMMMMMMMMMMMMMMM:"#,
+    r#":MMMMMMMMMMMMMMMMMMMMMMMM:"#,
+    r#".MMMMMMMMMMMMMMMMMMMMMMMMX."#,
+    r#" kMMMMMMMMMMMMMMMMMMMMMMMMWd."#,
+    r#" .XMMMMMMMMMMMMMMMMMMMMMMMMMMk"#,
+    r#"  .XMMMMMMMMMMMMMMMMMMMMMMMMK."#,
+    r#"    kMMMMMMMMMMMMMMMMMMMMMMd"#,
+    r#"     ;KMMMMMMMWXXWMMMMMMMk."#,
+    r#"       .cooc,.    .,coo:."#,
+];
+
+fn nf_kv(key: &str, val: &str) -> String {
+    format!("\x1b[1;32m{key}:\x1b[0m {val}")
+}
+
+const COMMANDS: &[&str] = &[
+    "pwd", "ls", "cd", "cat", "less", "more", "echo", "printf", "mkdir", "cp", "ln", "mv", "rm",
+    "rmdir", "touch", "history", "undo", "inspect", "stat", "file", "why", "explain", "graph",
+    "help", "man", "neofetch", "fastfetch", "screenfetch", "clear", "head", "tail", "wc", "nl",
+    "tac", "cut", "tr", "tee", "seq", "tree", "find", "du", "df", "basename", "dirname",
+    "realpath", "readlink", "true", "false", "test", "exit", "logout", "alias", "unalias", "type",
+    "which", "command", "pushd", "popd", "dirs", "export", "set", "unset", "env", "date", "whoami",
+    "hostname", "uname", "parse", "square", "sum", "grep", "filter", "sort", "uniq", "unique",
+    "lines", "rev", "reverse",
+];
+
+fn complete_prefix(line: &str) -> (&str, bool) {
+    let stage = match line.rfind(|c| c == '|' || c == '>') {
+        Some(i) => &line[i + 1..],
+        None => line,
+    };
+    let trimmed = stage.trim_start();
+    let want_cmd = !trimmed.contains(char::is_whitespace);
+    let prefix = match line.rsplit_once(char::is_whitespace) {
+        Some((_, last)) => last,
+        None => line,
+    };
+    let prefix = prefix.trim_start_matches(|c| c == '|' || c == '>');
+    (prefix, want_cmd)
+}
+
 fn render_graph(nodes: &[GraphNode]) -> String {
     if nodes.is_empty() {
         return "no pipeline".to_string();
@@ -1101,6 +1270,7 @@ fn command_meaning(name: &str) -> &'static str {
         "touch" => "bind an empty blob",
         "graph" => "the last transform chain",
         "why" | "explain" => "provenance of a name",
+        "neofetch" | "fastfetch" | "screenfetch" => "a projection of the machine and store",
         "pwd" => "the path projection of the current tree cap",
         "head" | "tail" | "wc" | "grep" | "sort" | "uniq" | "cut" | "tr" => {
             "a transform over a value"
@@ -1316,5 +1486,66 @@ mod tests {
         handled(&mut s, "echo \"a,b\\nc,d\" > t.csv");
         assert_eq!(handled(&mut s, "cut -d , -f 2 t.csv"), "b\nd");
         assert_eq!(handled(&mut s, "cat nums | tr o 0"), "0ne\ntw0\nthree\nf0ur");
+    }
+
+    #[test]
+    fn neofetch_projects_machine_and_store() {
+        let mut s = Session::new();
+        let out = handled(&mut s, "neofetch");
+        let plain: String = {
+            let mut p = String::new();
+            let mut it = out.chars().peekable();
+            while let Some(c) = it.next() {
+                if c == '\x1b' {
+                    if it.peek() == Some(&'[') {
+                        it.next();
+                        while let Some(x) = it.next() {
+                            if x.is_ascii_alphabetic() {
+                                break;
+                            }
+                        }
+                    }
+                    continue;
+                }
+                p.push(c);
+            }
+            p
+        };
+        let cols: Vec<usize> = plain
+            .lines()
+            .filter_map(|line| line.find("OS:").or_else(|| line.find("shell@")))
+            .collect();
+        assert!(cols.len() >= 2, "{plain}");
+        assert!(cols.windows(2).all(|w| w[0] == w[1]), "{plain}");
+        assert!(out.contains("'c."), "{out}");
+        assert!(out.contains(",xNMM."), "{out}");
+        assert!(out.contains(".cooc,."), "{out}");
+        assert!(out.contains("shell"), "{out}");
+        assert!(out.contains("OS:"), "{out}");
+        assert!(out.contains("Tacit"), "{out}");
+        assert!(out.contains("Mac16,8"), "{out}");
+        assert!(out.contains("Apple M4 Pro"), "{out}");
+        assert!(out.contains("Quartz Compositor"), "{out}");
+        assert!(handled(&mut s, "type neofetch").contains("projection"),);
+    }
+
+    #[test]
+    fn complete_commands_and_names() {
+        let mut s = Session::new();
+        let cmds = s.complete("c");
+        assert!(cmds.iter().any(|c| c == "cat"), "{cmds:?}");
+        assert!(cmds.iter().any(|c| c == "cd"), "{cmds:?}");
+        handled(&mut s, "echo hi > hello.txt");
+        handled(&mut s, "mkdir home");
+        let names = s.complete("cat h");
+        assert!(names.iter().any(|c| c == "hello.txt"), "{names:?}");
+        assert!(names.iter().any(|c| c == "home/"), "{names:?}");
+        let pipe = s.complete("cat hello.txt | g");
+        assert!(pipe.iter().any(|c| c == "grep"), "{pipe:?}");
+        handled(&mut s, "cd home");
+        handled(&mut s, "echo x > note.txt");
+        handled(&mut s, "cd /");
+        let nested = s.complete("cat home/n");
+        assert!(nested.iter().any(|c| c == "home/note.txt"), "{nested:?}");
     }
 }

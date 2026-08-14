@@ -33,6 +33,10 @@ pub fn graph() -> String {
     SESS.with(|s| s.borrow().graph_text())
 }
 
+pub fn complete(line: &str) -> String {
+    SESS.with(|s| s.borrow().complete(line).join("\n"))
+}
+
 pub fn eval(src: &str) -> Result<String, String> {
     let src = src.trim();
     if src.is_empty() || src.starts_with('#') {
