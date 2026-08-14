@@ -11,6 +11,9 @@ context: |
   Not: processes + threads + files + syscalls.
   One sentence: Linux virtualizes a computer for processes; Tacit
   virtualizes the computer as an array-transformation machine.
+  If Unix had never existed: values, transformations, composition,
+  capabilities, evaluation. Agents are transforms. Every effect
+  carries authority and provenance.
   Research test: one Uiua program, discovered dependencies, zero-copy
   immutable sharing, placement across cores/SIMD/GPU — no threads, locks,
   explicit GPU dispatch, or byte-stream IPC. Unix compat is not success.
