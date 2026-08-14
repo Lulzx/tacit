@@ -16,11 +16,16 @@ If Unix had never existed, the primitives would be values, transformations, comp
 
 ## Status
 
-Specs only. Nothing boots yet.
+Boots freestanding under QEMU `aarch64` virt (HVF on an Apple Silicon Mac), no Linux or macOS in the guest. See `docs/run.md` for the full first-milestone demo.
 
-One change: [`introduce-tacit`](openspec/changes/introduce-tacit/). Kernel model, QEMU `aarch64` boot on an Apple Silicon Mac, live graph, effects before commit, agents as transforms, then fusion and capability send.
+## Build and run
 
-Read the [proposal](openspec/changes/introduce-tacit/proposal.md), then the [research note](openspec/changes/introduce-tacit/research.md) if you care why this can be faster than Linux on array work — and why host-versus-device is the wrong split on this chip.
+```sh
+./build.sh   # host compiler (Uiua -> UIR), then the freestanding AArch64 image
+./qemu.sh    # boot build/tacit.elf under QEMU aarch64 virt (HVF)
+```
+
+The guest prints a ready banner that names Tacit, publishes the M4 Pro machine description, runs `C = (A + B) × D` while still showing Add, Multiply, and the edge between them, and reports its provenance. One granted agent-shaped transform summarizes the live graph. Fusion (`fused bytes < unfused`) and zero-copy send benches print in-image counters.
 
 ## Laws
 
@@ -32,8 +37,13 @@ Read the [proposal](openspec/changes/introduce-tacit/proposal.md), then the [res
 6. Determinism is the default. Nondeterminism is explicit data.
 7. The hot path stays simple.
 
-## First demo
+## Reading
 
-Boot under QEMU `aarch64` virt (HVF on the Mac) with no Linux or macOS in the guest. Print a ready banner that says Tacit. Publish a machine description of the M4 Pro engines. Run `C = (A + B) × D` on the boot CPU and still show Add, Multiply, and the edge between them.
+- [proposal](openspec/changes/introduce-tacit/proposal.md) — why, what, the seven laws
+- [design](openspec/changes/introduce-tacit/design.md) — decisions
+- [research](openspec/changes/introduce-tacit/research.md) — why this can beat Linux on array work
+- [five primitives and the Unix/Metal noun map](docs/primitives.md)
+- [first-milestone Uiua subset](docs/subset.md)
+- [build and run](docs/run.md)
 
 Language is Uiua. IR is UIR. Machine layer is a tiny freestanding AArch64 runtime. Policy is Uiua. Reference hardware is Apple M4 Pro.
