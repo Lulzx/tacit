@@ -56,16 +56,23 @@ After the ready banner the guest, unattended:
    same value twice deduplicates to the same id; loading returns it),
 7. demonstrates deterministic replay: clock reads are recorded, and
    `&replay-clock` returns the exact recorded values in order,
-8. prints the fusion bench (fused bytes < unfused bytes) and the zero-copy
+8. prints the fusion bench (fused bytes < unfused bytes), the zero-copy
    send bench (capability share vs explicit copy, unique-region in-place
-   mutation vs immutable refusal).
+   mutation vs immutable refusal), and the SME matmul bench (C00 = 192 and
+   the per-engine entries for `&matmul`).
 
 Pure elementwise nodes are placed on the **NEON engine**: the stepper
 dispatches `engine = neon` to a 128-bit Advanced-SIMD kernel, and the fused
 Add-then-Multiply runs as one NEON entry. `&stats` reports a per-engine
 breakdown (e.g. `kernel entries: 1 (neon 1)` for the fused bench). This is
-speed-stack level 6 — engines as placements of the same node — in its first
-slice; SME, GPU, and ANE stay named-but-offline engines.
+speed-stack level 6 — engines as placements of the same node.
+
+`&matmul` is placed on the **SME engine**.  SME presence is probed from
+`ID_AA64PFR1_EL1` (QEMU keeps the ID registers consistent with what it
+exposes): on this Mac both HVF and TCG `-cpu max` report it online, and the
+matmul bench shows `kernel entries: 1 (sme 1)`.  The first slice enters and
+leaves streaming mode (`smstart`/`smstop`); the ZA-accumulating tile kernel
+is the next slice.  GPU and ANE stay named-but-offline engines.
 
 ## Uiua shell
 

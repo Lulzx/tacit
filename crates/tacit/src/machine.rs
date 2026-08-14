@@ -13,6 +13,8 @@ pub struct EngineDesc {
 
 /// Ordered list of engines, matching UIR's engine code order.  Only the boot
 /// CPU is online; its NEON unit is wired and executes the elementwise kernels.
+/// SME's online flag is decided at run time by the ID-register probe (it is
+/// implemented under TCG `-cpu max`; HVF may or may not expose it).
 pub static ENGINES: [EngineDesc; 8] = [
     EngineDesc { name: "p-core", online: true, kind: uir::ENGINE_PCORE },
     EngineDesc { name: "e-core", online: false, kind: uir::ENGINE_ECORE },
@@ -23,6 +25,14 @@ pub static ENGINES: [EngineDesc; 8] = [
     EngineDesc { name: "media", online: false, kind: uir::ENGINE_MEDIA },
     EngineDesc { name: "display", online: false, kind: uir::ENGINE_DISPLAY },
 ];
+
+/// Whether engine `kind` is online, consulting the runtime SME probe.
+pub fn online(kind: u8) -> bool {
+    if kind == uir::ENGINE_SME {
+        return crate::sme::available();
+    }
+    ENGINES.iter().any(|e| e.kind == kind && e.online)
+}
 
 pub const HOME: &str = "uma";
 
@@ -36,7 +46,7 @@ pub fn description_text() -> alloc::vec::Vec<u8> {
     for e in ENGINES.iter() {
         crate::fmt::append_str(&mut s, "    ");
         crate::fmt::append_str(&mut s, e.name);
-        crate::fmt::append_str(&mut s, if e.online { "  [online]" } else { "  [offline]" });
+        crate::fmt::append_str(&mut s, if online(e.kind) { "  [online]" } else { "  [offline]" });
         crate::fmt::append_str(&mut s, "\n");
     }
     s

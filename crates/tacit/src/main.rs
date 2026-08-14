@@ -15,6 +15,7 @@ mod mem;
 mod mmu;
 mod objects;
 mod shell;
+mod sme;
 mod stepper;
 mod trace;
 mod uart;
@@ -42,6 +43,7 @@ static BENCH_SEND_UIR: &[u8] = include_bytes!("../embedded/bench-send.uir");
 static POLICY_UIR: &[u8] = include_bytes!("../embedded/policy.uir");
 static BENCH_FUSED_UIR: &[u8] = include_bytes!("../embedded/bench-fused.uir");
 static BENCH_UNFUSED_UIR: &[u8] = include_bytes!("../embedded/bench-unfused.uir");
+static BENCH_MATMUL_UIR: &[u8] = include_bytes!("../embedded/bench-matmul.uir");
 
 static mut FDT_BUF: [u8; 1024 * 1024] = [0; 1024 * 1024];
 static mut CONSOLE: Option<console::Console> = None;
@@ -61,6 +63,7 @@ static mut BENCH_SEND: Option<Program> = None;
 static mut POLICY: Option<Program> = None;
 static mut BENCH_FUSED: Option<Program> = None;
 static mut BENCH_UNFUSED: Option<Program> = None;
+static mut BENCH_MATMUL: Option<Program> = None;
 
 macro_rules! prog {
     ($slot:ident) => {
@@ -161,6 +164,7 @@ pub extern "C" fn kernel_main(fdt_ptr: usize) -> ! {
     // --- machine description + microkernel (one Realm, starter caps, quota) ---
     let quota = fb_addr - image_end;
     kernel::init(quota);
+    sme::enable();
     gic::init();
     uart::enable_rx_irq();
 
@@ -181,6 +185,7 @@ pub extern "C" fn kernel_main(fdt_ptr: usize) -> ! {
         POLICY = Some(uir::decode(POLICY_UIR).unwrap());
         BENCH_FUSED = Some(uir::decode(BENCH_FUSED_UIR).unwrap());
         BENCH_UNFUSED = Some(uir::decode(BENCH_UNFUSED_UIR).unwrap());
+        BENCH_MATMUL = Some(uir::decode(BENCH_MATMUL_UIR).unwrap());
     }
 
     // =======================================================================
@@ -255,6 +260,9 @@ pub extern "C" fn kernel_main(fdt_ptr: usize) -> ! {
     console_write_str("\n");
 
     run_uir("bench-send", prog!(BENCH_SEND), None, None);
+    console_write_str("\n");
+
+    run_uir("bench-matmul", prog!(BENCH_MATMUL), None, None);
     console_write_str("\n");
 
     // =======================================================================

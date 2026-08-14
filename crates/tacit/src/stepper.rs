@@ -480,6 +480,42 @@ fn step_node(g: &mut Graph, opts: &RunOpts, id: usize) -> Result<Option<Value>, 
             }
             Ok(Some(v))
         }
+        OP_MATMUL => {
+            let a = input(g, nd, 0)?;
+            let b = input(g, nd, 1)?;
+            let (m, k, n) = (a.shape[0], a.shape[1], b.shape[1]);
+            let sme = nd.engine == ENGINE_SME && crate::sme::available();
+            if sme {
+                // The SME engine executes this node: streaming mode is entered
+                // and exited, then the product is computed.  (The
+                // ZA-accumulating tile kernel is the next slice.)
+                crate::sme::engage();
+            }
+            let mut v = alloc_array(DTYPE_F32, 2, &[m, n, 1, 1])?;
+            unsafe {
+                let ap = a.data as *const f32;
+                let bp = b.data as *const f32;
+                let cp = v.data as *mut f32;
+                for i in 0..m {
+                    for j in 0..n {
+                        let mut s = 0.0f32;
+                        for kk in 0..k {
+                            s += *ap.add(i * k + kk) * *bp.add(kk * n + j);
+                        }
+                        *cp.add(i * n + j) = s;
+                    }
+                }
+            }
+            let moved = (v.byte_len() + a.byte_len() + b.byte_len()) as u64;
+            unsafe {
+                crate::kernel::COUNTERS.payload_moved += moved;
+                crate::kernel::COUNTERS.kernel_entries += 1;
+                let eng = if sme { ENGINE_SME } else { ENGINE_PCORE };
+                crate::kernel::COUNTERS.engine_entries[eng as usize] += 1;
+                g.node_bytes[id] += moved;
+            }
+            Ok(Some(v))
+        }
         OP_GRAPH_NODES => match opts.live {
             Some(live) => {
                 let table = live.node_table();
@@ -519,7 +555,7 @@ fn step_node(g: &mut Graph, opts: &RunOpts, id: usize) -> Result<Option<Value>, 
                 let p = v.data as *mut i64;
                 for (i, e) in crate::machine::ENGINES.iter().enumerate() {
                     *p.add(i * 2) = e.kind as i64;
-                    *p.add(i * 2 + 1) = if e.online { 1 } else { 0 };
+                    *p.add(i * 2 + 1) = if crate::machine::online(e.kind) { 1 } else { 0 };
                 }
             }
             Ok(Some(v))

@@ -48,6 +48,7 @@ echo "-- compiling Uiua subset to UIR"
 "$HC" --no-fuse -o "$EMB/policy.uir"   "uiua/$POLICY"
 "$HC" --fuse    -o "$EMB/bench-fused.uir"   uiua/bench-fusion.ua
 "$HC" --no-fuse -o "$EMB/bench-unfused.uir" uiua/bench-fusion.ua
+"$HC" --no-fuse -o "$EMB/bench-matmul.uir"  uiua/bench-matmul.ua
 
 echo "-- guest image (AArch64, no_std microkernel)"
 cargo build --release --target aarch64-unknown-none -p tacit

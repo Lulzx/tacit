@@ -955,6 +955,23 @@ impl Compiler {
                 self.source(OP_TRACE, "Trace");
                 Ok(())
             }
+            "matmul" => {
+                // dyadic: `&matmul A B` for f32 rank-2 A [M,K], B [K,N].
+                let b = self.pop()?;
+                let a = self.pop()?;
+                if a.rank != 2 || b.rank != 2 {
+                    return Err(self.error("&matmul needs two rank-2 matrices"));
+                }
+                if a.shape[1] != b.shape[0] {
+                    return Err(self.error("&matmul inner dimension mismatch"));
+                }
+                let shape = [a.shape[0], b.shape[1], 1, 1];
+                // Placement: matrix work goes to the SME engine.
+                self.engine = ENGINE_SME;
+                let n = self.emit(OP_MATMUL, DTYPE_F32, 2, &shape, true, CAP_NONE, a.node, b.node, NONE, "Matmul", &[]);
+                self.stack.push(SValue { node: n, dtype: DTYPE_F32, rank: 2, shape });
+                Ok(())
+            }
             other => Err(self.error(&format!("unknown system function '&{}'", other))),
         }
     }
