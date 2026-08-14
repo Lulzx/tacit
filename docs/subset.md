@@ -62,6 +62,13 @@ arguments and code is read *right-to-left* (`+ 2 3` is 2+3, `× 2 + 3 5` is
   store: `id = H(data)` (deterministic FNV-1a), stores deduplicate by id,
   and `&load` returns the same value.  The store holds *values*, not bulk
   payloads — anything over 64 KiB is refused and stays on the datapath.
+- `&clock` — the monotonic clock in microseconds.  `&keys` and `&clock` are
+  *recorded*: every world read is appended to the effect-input trace with a
+  sequence number.
+- `&replay-clock` `&replay-keys` — consume the next recorded input of that
+  kind instead of the live device, so a sequence re-run from the same trace
+  is deterministic.
+- `&trace` — the recorded effect-input trace as a table `[seq, kind, bytes]`.
 
 The table operations the agent/scheduler policies need are the core glyphs
 above: `▽ = … ⊡ …` filters a table by a column (Uiua's keep on a mask), and

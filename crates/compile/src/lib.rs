@@ -940,6 +940,21 @@ impl Compiler {
                 self.stack.push(SValue { node: n, dtype: DTYPE_I64, rank: 1, shape: [0, 1, 1, 1] });
                 Ok(())
             }
+            "clock" | "replay-clock" => {
+                let op = if name == "clock" { OP_CLOCK } else { OP_REPLAY_CLOCK };
+                let n = self.emit(op, DTYPE_I64, 0, &[1, 1, 1, 1], false, CAP_NONE, NONE, NONE, NONE, if name == "clock" { "Clock" } else { "ReplayClock" }, &[]);
+                self.stack.push(SValue { node: n, dtype: DTYPE_I64, rank: 0, shape: [1, 1, 1, 1] });
+                Ok(())
+            }
+            "replay-keys" => {
+                let n = self.emit(OP_REPLAY_KEYS, DTYPE_U8, 1, &[0, 1, 1, 1], false, CAP_NONE, NONE, NONE, NONE, "ReplayKeys", &[]);
+                self.stack.push(SValue { node: n, dtype: DTYPE_U8, rank: 1, shape: [0, 1, 1, 1] });
+                Ok(())
+            }
+            "trace" => {
+                self.source(OP_TRACE, "Trace");
+                Ok(())
+            }
             other => Err(self.error(&format!("unknown system function '&{}'", other))),
         }
     }

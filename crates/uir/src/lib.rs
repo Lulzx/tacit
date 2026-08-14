@@ -73,6 +73,10 @@ pub const OP_EQ: u8 = 36; // = elementwise equals -> i64 0/1 mask
 pub const OP_HASH: u8 = 37; // content id over a value (FNV-1a)
 pub const OP_STORE: u8 = 38; // register a value in the content-addressed store
 pub const OP_LOAD: u8 = 39; // fetch a value by content id
+pub const OP_CLOCK: u8 = 40; // read the monotonic clock (recorded)
+pub const OP_REPLAY_KEYS: u8 = 41; // replay the next recorded keyboard line
+pub const OP_REPLAY_CLOCK: u8 = 42; // replay the next recorded clock read
+pub const OP_TRACE: u8 = 43; // the recorded effect-input trace as a table
 
 pub const NONE: u32 = 0xffff_ffff;
 
@@ -138,6 +142,10 @@ pub fn op_name(op: u8) -> &'static str {
         OP_HASH => "Hash",
         OP_STORE => "Store",
         OP_LOAD => "Load",
+        OP_CLOCK => "Clock",
+        OP_REPLAY_KEYS => "ReplayKeys",
+        OP_REPLAY_CLOCK => "ReplayClock",
+        OP_TRACE => "Trace",
         _ => "?",
     }
 }

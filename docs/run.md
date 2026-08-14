@@ -53,7 +53,9 @@ After the ready banner the guest, unattended:
    ABI (batching with dependencies, unmet dependencies refused),
 6. exercises the content-addressed object store (`id = H(data)`: storing the
    same value twice deduplicates to the same id; loading returns it),
-7. prints the fusion bench (fused bytes < unfused bytes) and the zero-copy
+7. demonstrates deterministic replay: clock reads are recorded, and
+   `&replay-clock` returns the exact recorded values in order,
+8. prints the fusion bench (fused bytes < unfused bytes) and the zero-copy
    send bench (capability share vs explicit copy, unique-region in-place
    mutation vs immutable refusal).
 

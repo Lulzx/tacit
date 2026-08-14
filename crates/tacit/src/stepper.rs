@@ -423,9 +423,54 @@ fn step_node(g: &mut Graph, opts: &RunOpts, id: usize) -> Result<Option<Value>, 
         }
         OP_KEYBOARD => {
             let line = crate::devices::read_line();
+            crate::trace::record(crate::trace::KIND_KEYS, line.clone());
             let mut v = alloc_array(DTYPE_U8, 1, &[line.len(), 1, 1, 1])?;
             unsafe {
                 core::ptr::copy_nonoverlapping(line.as_ptr(), v.data as *mut u8, line.len());
+            }
+            Ok(Some(v))
+        }
+        OP_CLOCK => {
+            let us = crate::clock_now();
+            crate::trace::record(crate::trace::KIND_CLOCK, us.to_le_bytes().to_vec());
+            let mut v = alloc_array(DTYPE_I64, 0, &[1, 1, 1, 1])?;
+            unsafe { *(v.data as *mut i64) = us as i64 };
+            Ok(Some(v))
+        }
+        OP_REPLAY_KEYS => {
+            match crate::trace::replay_next(crate::trace::KIND_KEYS) {
+                Some(line) => {
+                    let mut v = alloc_array(DTYPE_U8, 1, &[line.len(), 1, 1, 1])?;
+                    unsafe {
+                        core::ptr::copy_nonoverlapping(line.as_ptr(), v.data as *mut u8, line.len());
+                    }
+                    Ok(Some(v))
+                }
+                None => Err("no recorded keyboard line to replay"),
+            }
+        }
+        OP_REPLAY_CLOCK => {
+            match crate::trace::replay_next(crate::trace::KIND_CLOCK) {
+                Some(data) => {
+                    let us = u64::from_le_bytes([data[0], data[1], data[2], data[3], data[4], data[5], data[6], data[7]]);
+                    let mut v = alloc_array(DTYPE_I64, 0, &[1, 1, 1, 1])?;
+                    unsafe { *(v.data as *mut i64) = us as i64 };
+                    Ok(Some(v))
+                }
+                None => Err("no recorded clock to replay"),
+            }
+        }
+        OP_TRACE => {
+            let t = crate::trace::table();
+            let rows = t.len();
+            let mut v = alloc_array(DTYPE_I64, 2, &[rows, 3, 1, 1])?;
+            unsafe {
+                let p = v.data as *mut i64;
+                for (r, row) in t.iter().enumerate() {
+                    *p.add(r * 3) = row[0];
+                    *p.add(r * 3 + 1) = row[1];
+                    *p.add(r * 3 + 2) = row[2];
+                }
             }
             Ok(Some(v))
         }

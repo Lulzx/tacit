@@ -16,6 +16,7 @@ mod mmu;
 mod objects;
 mod shell;
 mod stepper;
+mod trace;
 mod uart;
 
 use core::arch::global_asm;
@@ -33,6 +34,7 @@ static MACHINE_UIR: &[u8] = include_bytes!("../embedded/machine.uir");
 static GRAPH_UIR: &[u8] = include_bytes!("../embedded/graph.uir");
 static PROVENANCE_UIR: &[u8] = include_bytes!("../embedded/provenance.uir");
 static OBJECTS_UIR: &[u8] = include_bytes!("../embedded/objects.uir");
+static REPLAY_UIR: &[u8] = include_bytes!("../embedded/replay.uir");
 static BENCH_SEND_UIR: &[u8] = include_bytes!("../embedded/bench-send.uir");
 static POLICY_UIR: &[u8] = include_bytes!("../embedded/policy.uir");
 static BENCH_FUSED_UIR: &[u8] = include_bytes!("../embedded/bench-fused.uir");
@@ -48,6 +50,7 @@ static mut MACHINE: Option<Program> = None;
 static mut GRAPH: Option<Program> = None;
 static mut PROVENANCE: Option<Program> = None;
 static mut OBJPROG: Option<Program> = None;
+static mut REPLAY: Option<Program> = None;
 static mut BENCH_SEND: Option<Program> = None;
 static mut POLICY: Option<Program> = None;
 static mut BENCH_FUSED: Option<Program> = None;
@@ -164,6 +167,7 @@ pub extern "C" fn kernel_main(fdt_ptr: usize) -> ! {
         GRAPH = Some(uir::decode(GRAPH_UIR).unwrap());
         PROVENANCE = Some(uir::decode(PROVENANCE_UIR).unwrap());
         OBJPROG = Some(uir::decode(OBJECTS_UIR).unwrap());
+        REPLAY = Some(uir::decode(REPLAY_UIR).unwrap());
         BENCH_SEND = Some(uir::decode(BENCH_SEND_UIR).unwrap());
         POLICY = Some(uir::decode(POLICY_UIR).unwrap());
         BENCH_FUSED = Some(uir::decode(BENCH_FUSED_UIR).unwrap());
@@ -204,6 +208,9 @@ pub extern "C" fn kernel_main(fdt_ptr: usize) -> ! {
     console_write_str("\n");
 
     run_uir("objects", prog!(OBJPROG), None, None);
+    console_write_str("\n");
+
+    run_uir("replay", prog!(REPLAY), None, None);
     console_write_str("\n");
 
     // Mechanism self-test: capability enforcement (revoke / forge / unmet
