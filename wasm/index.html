@@ -738,7 +738,7 @@ function applyRoute(push) {
 async function init() {
   applyRoute(false);
   try {
-    const resp = await fetch(appBase() + 'tacit_wasm.wasm');
+    const resp = await fetch(appBase() + 'tacit_wasm.wasm?v=3');
     const { instance } = await WebAssembly.instantiate(await resp.arrayBuffer(), {});
     wasm = instance.exports;
     memory = wasm.memory;
