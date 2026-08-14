@@ -1,0 +1,13 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/uir",
+    "crates/tacit",
+    "crates/hostc",
+]
+
+[profile.release]
+opt-level = 3
+debug = false
+panic = "abort"
+lto = true

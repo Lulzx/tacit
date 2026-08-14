@@ -1,0 +1,4 @@
+/target
+/build
+/crates/tacit/embedded/*.uir
+Cargo.lock
