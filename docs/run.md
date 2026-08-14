@@ -60,7 +60,10 @@ After the ready banner the guest, unattended:
 8. prints the fusion bench (fused bytes < unfused bytes), the zero-copy
    send bench (capability share vs explicit copy, unique-region in-place
    mutation vs immutable refusal), and the SME matmul bench (C00 = 192 and
-   the per-engine entries for `&matmul`).
+   the per-engine entries for `&matmul`),
+9. verifies the **self-hosted compiler**: the guest re-compiles every
+   bundled Uiua source (embedded as text) and must produce byte-identical
+   UIR to the host-compiled payloads it runs.
 
 Pure elementwise nodes are placed on the **NEON engine**: the stepper
 dispatches `engine = neon` to a 128-bit Advanced-SIMD kernel, and the fused
@@ -92,6 +95,11 @@ guest compiles each typed line to UIR itself, using the *same* compiler
 source as the host (`crates/compile`), and steps it on the boot CPU.
 Bindings are values — `A ← [1 2 3]` snapshots the result, so later lines
 can reference `A` as a constant.
+
+Before the shell, the boot runs the **self-hosted compiler check**: the
+guest re-compiles every bundled Uiua source (embedded as text) and requires
+byte-identical UIR to the host-compiled payload it already runs.  Same
+sources, new host.
 
 ```text
 uiua> × 2 3

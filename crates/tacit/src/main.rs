@@ -15,6 +15,7 @@ mod mem;
 mod mmu;
 mod objects;
 mod pac;
+mod selfhost;
 mod shell;
 mod sme;
 mod stepper;
@@ -265,6 +266,11 @@ pub extern "C" fn kernel_main(fdt_ptr: usize) -> ! {
     console_write_str("\n");
 
     run_uir("bench-matmul", prog!(BENCH_MATMUL), None, None);
+    console_write_str("\n");
+
+    // The guest re-compiles the same Uiua sources the host bundled and must
+    // produce byte-identical UIR.
+    selfhost::verify();
     console_write_str("\n");
 
     // =======================================================================
