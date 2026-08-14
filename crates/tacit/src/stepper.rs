@@ -53,7 +53,7 @@ pub struct Graph<'a> {
     pub done: alloc::vec::Vec<bool>,
     pub consumers: alloc::vec::Vec<u32>,
     pub ready_input: Option<alloc::vec::Vec<[i64; 2]>>, // for ReadySet (policy)
-    pub order_result: alloc::vec::Vec<u32>,             // for Order (policy)
+    pub last: Option<usize>,                            // most recently completed node
     pub node_bytes: alloc::vec::Vec<u64>,               // per-node payload bytes moved
 }
 
@@ -74,7 +74,7 @@ impl<'a> Graph<'a> {
             done: alloc::vec![false; n],
             consumers,
             ready_input: None,
-            order_result: alloc::vec::Vec::new(),
+            last: None,
             node_bytes: alloc::vec![0u64; n],
         }
     }
@@ -203,6 +203,7 @@ pub fn run(g: &mut Graph, opts: &RunOpts) -> Result<(), &'static str> {
                 Ok(v) => {
                     g.vals[id] = v;
                     g.done[id] = true;
+                    g.last = Some(id);
                     release_inputs(g, id);
                 }
                 Err(e) => {
@@ -228,10 +229,22 @@ fn order_ready(_g: &Graph, opts: &RunOpts, ready: &[u32]) -> alloc::vec::Vec<u32
             pg.ready_input = Some(table);
             let popts = RunOpts { realm: opts.realm, live: None, policy: None, interactive: false };
             let _ = run(&mut pg, &popts);
-            if pg.order_result.is_empty() {
-                ready.to_vec()
-            } else {
-                pg.order_result.clone()
+            // The policy's output is a Uiua value: a grade vector (`⍏`/`⍖`)
+            // or an ordered table.  Its first column is the run order.
+            match pg.last.and_then(|i| pg.vals[i].clone()) {
+                Some(v) => {
+                    let rows = if v.rank >= 1 { v.shape[0] } else { 1 };
+                    let cols = if v.rank >= 2 { v.shape[1] } else { 1 };
+                    let mut out = alloc::vec::Vec::with_capacity(rows);
+                    unsafe {
+                        let p = v.data as *const i64;
+                        for r in 0..rows {
+                            out.push(*p.add(r * cols) as u32);
+                        }
+                    }
+                    out
+                }
+                None => ready.to_vec(),
             }
         }
     }
@@ -311,12 +324,13 @@ fn step_node(g: &mut Graph, opts: &RunOpts, id: usize) -> Result<Option<Value>, 
         OP_ADD | OP_SUB | OP_MUL | OP_DIV => {
             let a = input(g, nd, 0)?;
             let b = input(g, nd, 1)?;
-            let r = elementwise(nd.op, &a, &b)?;
+            let r = elementwise(nd.op, &a, &b, nd.engine)?;
             if let Some(v) = &r {
                 unsafe {
                     let moved = (v.byte_len() + a.byte_len() + b.byte_len()) as u64;
                     crate::kernel::COUNTERS.payload_moved += moved;
                     crate::kernel::COUNTERS.kernel_entries += 1;
+                    crate::kernel::COUNTERS.engine_entries[nd.engine as usize] += 1;
                     g.node_bytes[id] += moved;
                 }
             }
@@ -326,12 +340,13 @@ fn step_node(g: &mut Graph, opts: &RunOpts, id: usize) -> Result<Option<Value>, 
             let a = input(g, nd, 0)?;
             let b = input(g, nd, 1)?;
             let d = input(g, nd, 2)?;
-            let r = elementwise_fused(&a, &b, &d)?;
+            let r = elementwise_fused(&a, &b, &d, nd.engine)?;
             if let Some(v) = &r {
                 unsafe {
                     let moved = (v.byte_len() + a.byte_len() + b.byte_len() + d.byte_len()) as u64;
                     crate::kernel::COUNTERS.payload_moved += moved;
                     crate::kernel::COUNTERS.kernel_entries += 1;
+                    crate::kernel::COUNTERS.engine_entries[nd.engine as usize] += 1;
                     g.node_bytes[id] += moved;
                 }
             }
@@ -473,23 +488,166 @@ fn step_node(g: &mut Graph, opts: &RunOpts, id: usize) -> Result<Option<Value>, 
             }
             None => Ok(Some(scalar_value())),
         },
-        OP_FILTER => {
+        OP_GRADE_UP | OP_GRADE_DOWN => {
+            // ⍏/⍖ grade: row indices in ascending/descending order.  Rank-2
+            // tables are graded by the first column; rank-1 by value.
             let a = input(g, nd, 0)?;
-            if c.len() < 9 {
-                return Err("bad filter");
+            let desc = nd.op == OP_GRADE_DOWN;
+            let rows = if a.rank >= 1 { a.shape[0] } else { 1 };
+            let cols = if a.rank >= 2 { a.shape[1] } else { 1 };
+            let mut idx: alloc::vec::Vec<usize> = (0..rows).collect();
+            unsafe {
+                let p = a.data as *const i64;
+                idx.sort_by(|x, y| {
+                    let kx = *p.add(x * cols);
+                    let ky = *p.add(y * cols);
+                    if desc {
+                        ky.cmp(&kx)
+                    } else {
+                        kx.cmp(&ky)
+                    }
+                });
             }
-            let col = c[0] as usize;
-            let val = i64::from_le_bytes([c[1], c[2], c[3], c[4], c[5], c[6], c[7], c[8]]);
-            filter_table(&a, col, val)
+            let mut v = alloc_array(DTYPE_I64, 1, &[rows, 1, 1, 1])?;
+            unsafe {
+                let o = v.data as *mut i64;
+                for (i, r) in idx.iter().enumerate() {
+                    *o.add(i) = *r as i64;
+                }
+            }
+            Ok(Some(v))
         }
-        OP_SORT_BY => {
-            let a = input(g, nd, 0)?;
-            if c.len() < 2 {
-                return Err("bad sort");
+        OP_SELECT => {
+            // ⊏ select rows (rank-2) or elements (rank-1) by an index vector.
+            let idx = input(g, nd, 0)?;
+            let a = input(g, nd, 1)?;
+            let n = idx.elems();
+            let cols = if a.rank >= 2 { a.shape[1] } else { 1 };
+            let rk = if a.rank == 0 { 0 } else { a.rank };
+            let mut sh = [1usize; 4];
+            sh[0] = n;
+            if a.rank >= 2 {
+                sh[1] = cols;
             }
-            let col = c[0] as usize;
-            let desc = c[1] != 0;
-            sort_table(&a, col, desc)
+            let mut v = alloc_array(a.dtype, rk, &sh)?;
+            let es = a.elem_size();
+            unsafe {
+                let ip = idx.data as *const i64;
+                for i in 0..n {
+                    let r = *ip.add(i) as usize;
+                    for c in 0..cols {
+                        core::ptr::copy_nonoverlapping(
+                            (a.data + (r * cols + c) * es) as *const u8,
+                            (v.data + (i * cols + c) * es) as *mut u8,
+                            es,
+                        );
+                    }
+                }
+            }
+            Ok(Some(v))
+        }
+        OP_KEEP => {
+            // ▽ keep rows where the mask is nonzero.
+            let mask = input(g, nd, 0)?;
+            let a = input(g, nd, 1)?;
+            let rows = if a.rank >= 1 { a.shape[0] } else { 1 };
+            let cols = if a.rank >= 2 { a.shape[1] } else { 1 };
+            let mut keep: alloc::vec::Vec<usize> = alloc::vec::Vec::new();
+            unsafe {
+                let mp = mask.data as *const i64;
+                for r in 0..rows {
+                    if *mp.add(r) != 0 {
+                        keep.push(r);
+                    }
+                }
+            }
+            let rk = if a.rank == 0 { 0 } else { a.rank };
+            let mut sh = [1usize; 4];
+            sh[0] = keep.len();
+            if a.rank >= 2 {
+                sh[1] = cols;
+            }
+            let mut v = alloc_array(a.dtype, rk, &sh)?;
+            let es = a.elem_size();
+            unsafe {
+                for (i, r) in keep.iter().enumerate() {
+                    for c in 0..cols {
+                        core::ptr::copy_nonoverlapping(
+                            (a.data + (r * cols + c) * es) as *const u8,
+                            (v.data + (i * cols + c) * es) as *mut u8,
+                            es,
+                        );
+                    }
+                }
+            }
+            Ok(Some(v))
+        }
+        OP_PICK => {
+            // ⊡ n picks column n of a table (element n of a list).
+            let idx = input(g, nd, 0)?;
+            let a = input(g, nd, 1)?;
+            let which = unsafe { *(idx.data as *const i64) } as usize;
+            let rows = if a.rank >= 1 { a.shape[0] } else { 1 };
+            let cols = if a.rank >= 2 { a.shape[1] } else { 1 };
+            let es = a.elem_size();
+            match a.rank {
+                2 => {
+                    let mut v = alloc_array(a.dtype, 1, &[rows, 1, 1, 1])?;
+                    unsafe {
+                        for r in 0..rows {
+                            core::ptr::copy_nonoverlapping(
+                                (a.data + (r * cols + which) * es) as *const u8,
+                                (v.data + r * es) as *mut u8,
+                                es,
+                            );
+                        }
+                    }
+                    Ok(Some(v))
+                }
+                1 => {
+                    let mut v = alloc_array(a.dtype, 0, &[1, 1, 1, 1])?;
+                    unsafe {
+                        core::ptr::copy_nonoverlapping(
+                            (a.data + which * es) as *const u8,
+                            v.data as *mut u8,
+                            es,
+                        );
+                    }
+                    Ok(Some(v))
+                }
+                _ => Ok(Some(a)),
+            }
+        }
+        OP_EQ => {
+            // = elementwise equals -> i64 0/1 mask.
+            let a = input(g, nd, 0)?;
+            let b = input(g, nd, 1)?;
+            let (dtype, rank, shape) = broadcast(&a, &b);
+            let mut v = alloc_array(DTYPE_I64, rank, &shape)?;
+            let n = v.elems();
+            let a_scalar = a.rank == 0;
+            let b_scalar = b.rank == 0;
+            unsafe {
+                let o = v.data as *mut i64;
+                if dtype == DTYPE_F32 {
+                    let af = a.data as *const f32;
+                    let bf = b.data as *const f32;
+                    for i in 0..n {
+                        let x = *af.add(if a_scalar { 0 } else { i });
+                        let y = *bf.add(if b_scalar { 0 } else { i });
+                        *o.add(i) = if x == y { 1 } else { 0 };
+                    }
+                } else {
+                    let ai = a.data as *const i64;
+                    let bi = b.data as *const i64;
+                    for i in 0..n {
+                        let x = *ai.add(if a_scalar { 0 } else { i });
+                        let y = *bi.add(if b_scalar { 0 } else { i });
+                        *o.add(i) = if x == y { 1 } else { 0 };
+                    }
+                }
+            }
+            Ok(Some(v))
         }
         OP_COUNT => {
             let a = input(g, nd, 0)?;
@@ -613,23 +771,25 @@ fn step_node(g: &mut Graph, opts: &RunOpts, id: usize) -> Result<Option<Value>, 
             crate::fmt::append_u64(&mut out, c.payload_moved);
             crate::fmt::append_str(&mut out, ", kernel entries: ");
             crate::fmt::append_u64(&mut out, c.kernel_entries);
+            crate::fmt::append_str(&mut out, " (");
+            let mut first = true;
+            for (i, n) in c.engine_entries.iter().enumerate() {
+                if *n > 0 {
+                    if !first {
+                        crate::fmt::append_str(&mut out, ", ");
+                    }
+                    first = false;
+                    crate::fmt::append_str(&mut out, uir::engine_name(i as u8));
+                    crate::fmt::append_str(&mut out, " ");
+                    crate::fmt::append_u64(&mut out, *n);
+                }
+            }
+            crate::fmt::append_str(&mut out, ")");
             let mut v = alloc_array(DTYPE_U8, 1, &[out.len(), 1, 1, 1])?;
             unsafe {
                 core::ptr::copy_nonoverlapping(out.as_ptr(), v.data as *mut u8, out.len());
             }
             Ok(Some(v))
-        }
-        OP_ORDER => {
-            let a = input(g, nd, 0)?;
-            let cols = if a.rank >= 2 { a.shape[1] } else { 2 };
-            let n = if cols >= 1 { a.elems() / cols } else { 0 };
-            unsafe {
-                let p = a.data as *const i64;
-                for r in 0..n {
-                    g.order_result.push(*p.add(r * cols) as u32);
-                }
-            }
-            Ok(None)
         }
         _ => Err("unknown op"),
     }
@@ -672,12 +832,20 @@ fn elementwise(
     op: u8,
     a: &Value,
     b: &Value,
+    engine: u8,
 ) -> Result<Option<Value>, &'static str> {
     let (dtype, rank, shape) = broadcast(a, b);
     let mut v = alloc_array(dtype, rank, &shape)?;
     let n = v.elems();
     let a_scalar = a.rank == 0;
     let b_scalar = b.rank == 0;
+    // The NEON engine's kernel is the 128-bit SIMD loop; `÷` has no vector
+    // divide in AArch64 NEON, so it falls back to the scalar loop within the
+    // same engine entry.
+    if engine == ENGINE_NEON && dtype == DTYPE_F32 && op != OP_DIV {
+        neon_elementwise(op, a, b, &mut v);
+        return Ok(Some(v));
+    }
     unsafe {
         let p = v.data as *mut u8;
         match dtype {
@@ -718,13 +886,17 @@ fn elementwise(
     Ok(Some(v))
 }
 
-fn elementwise_fused(a: &Value, b: &Value, d: &Value) -> Result<Option<Value>, &'static str> {
+fn elementwise_fused(a: &Value, b: &Value, d: &Value, engine: u8) -> Result<Option<Value>, &'static str> {
     let (dtype, rank, shape) = broadcast(a, b);
     let mut v = alloc_array(dtype, rank, &shape)?;
     let n = v.elems();
     let a_scalar = a.rank == 0;
     let b_scalar = b.rank == 0;
     let d_scalar = d.rank == 0;
+    if engine == ENGINE_NEON && dtype == DTYPE_F32 {
+        neon_add_mul(a, b, d, &mut v);
+        return Ok(Some(v));
+    }
     unsafe {
         let p = v.data as *mut u8;
         match dtype {
@@ -753,6 +925,78 @@ fn elementwise_fused(a: &Value, b: &Value, d: &Value) -> Result<Option<Value>, &
         }
     }
     Ok(Some(v))
+}
+
+/// NEON (Advanced SIMD) elementwise kernel: 4 f32 lanes per 128-bit
+/// iteration, with a scalar tail.  This is the engine kernel that `engine =
+/// neon` dispatch reaches; it runs on the boot CPU's SIMD unit.
+fn neon_elementwise(op: u8, a: &Value, b: &Value, v: &mut Value) {
+    use core::arch::aarch64::*;
+    let n = v.elems();
+    let a_scalar = a.rank == 0;
+    let b_scalar = b.rank == 0;
+    unsafe {
+        let p = v.data as *mut f32;
+        let af = a.data as *const f32;
+        let bf = b.data as *const f32;
+        let av = *af;
+        let bv = *bf;
+        let mut i = 0usize;
+        while i + 4 <= n {
+            let x = if a_scalar { vdupq_n_f32(av) } else { vld1q_f32(af.add(i)) };
+            let y = if b_scalar { vdupq_n_f32(bv) } else { vld1q_f32(bf.add(i)) };
+            let r = match op {
+                OP_ADD => vaddq_f32(x, y),
+                OP_SUB => vsubq_f32(x, y),
+                OP_MUL => vmulq_f32(x, y),
+                _ => vdupq_n_f32(0.0),
+            };
+            vst1q_f32(p.add(i), r);
+            i += 4;
+        }
+        for j in i..n {
+            let x = *af.add(if a_scalar { 0 } else { j });
+            let y = *bf.add(if b_scalar { 0 } else { j });
+            *p.add(j) = match op {
+                OP_ADD => x + y,
+                OP_SUB => x - y,
+                OP_MUL => x * y,
+                _ => 0.0,
+            };
+        }
+    }
+}
+
+/// NEON (Advanced SIMD) fused Add-then-Multiply kernel: v = (a + b) * d.
+fn neon_add_mul(a: &Value, b: &Value, d: &Value, v: &mut Value) {
+    use core::arch::aarch64::*;
+    let n = v.elems();
+    let a_scalar = a.rank == 0;
+    let b_scalar = b.rank == 0;
+    let d_scalar = d.rank == 0;
+    unsafe {
+        let p = v.data as *mut f32;
+        let af = a.data as *const f32;
+        let bf = b.data as *const f32;
+        let df = d.data as *const f32;
+        let av = *af;
+        let bv = *bf;
+        let dv = *df;
+        let mut i = 0usize;
+        while i + 4 <= n {
+            let x = if a_scalar { vdupq_n_f32(av) } else { vld1q_f32(af.add(i)) };
+            let y = if b_scalar { vdupq_n_f32(bv) } else { vld1q_f32(bf.add(i)) };
+            let z = if d_scalar { vdupq_n_f32(dv) } else { vld1q_f32(df.add(i)) };
+            vst1q_f32(p.add(i), vmulq_f32(vaddq_f32(x, y), z));
+            i += 4;
+        }
+        for j in i..n {
+            let x = *af.add(if a_scalar { 0 } else { j });
+            let y = *bf.add(if b_scalar { 0 } else { j });
+            let z = *df.add(if d_scalar { 0 } else { j });
+            *p.add(j) = (x + y) * z;
+        }
+    }
 }
 
 fn broadcast(a: &Value, b: &Value) -> (u8, u8, [usize; 4]) {
@@ -817,66 +1061,6 @@ fn reduce_sum(a: &Value) -> Result<Option<Value>, &'static str> {
         }
         Ok(Some(v))
     }
-}
-
-fn filter_table(a: &Value, col: usize, val: i64) -> Result<Option<Value>, &'static str> {
-    if a.rank != 2 || col >= a.shape[1] {
-        return Err("bad table");
-    }
-    let rows = a.shape[0];
-    let cols = a.shape[1];
-    let mut keep = alloc::vec::Vec::new();
-    unsafe {
-        let p = a.data as *const i64;
-        for r in 0..rows {
-            if *p.add(r * cols + col) == val {
-                keep.push(r);
-            }
-        }
-    }
-    let mut v = alloc_array(DTYPE_I64, 2, &[keep.len(), cols, 1, 1])?;
-    unsafe {
-        let p = a.data as *const i64;
-        let o = v.data as *mut i64;
-        for (i, r) in keep.iter().enumerate() {
-            for cc in 0..cols {
-                *o.add(i * cols + cc) = *p.add(r * cols + cc);
-            }
-        }
-    }
-    Ok(Some(v))
-}
-
-fn sort_table(a: &Value, col: usize, desc: bool) -> Result<Option<Value>, &'static str> {
-    if a.rank != 2 || col >= a.shape[1] {
-        return Err("bad table");
-    }
-    let rows = a.shape[0];
-    let cols = a.shape[1];
-    let mut idx: alloc::vec::Vec<usize> = (0..rows).collect();
-    unsafe {
-        let p = a.data as *const i64;
-        idx.sort_by(|x, y| {
-            let kx = *p.add(x * cols + col);
-            let ky = *p.add(y * cols + col);
-            if desc {
-                ky.cmp(&kx)
-            } else {
-                kx.cmp(&ky)
-            }
-        });
-    }
-    let mut v = alloc_array(DTYPE_I64, 2, &[rows, cols, 1, 1])?;
-    unsafe {
-        let p = a.data as *const i64;
-        let o = v.data as *mut i64;
-        for (i, r) in idx.iter().enumerate() {
-            for cc in 0..cols {
-                *o.add(i * cols + cc) = *p.add(r * cols + cc);
-            }
-        }
-    }
-    Ok(Some(v))
 }
 
 fn format_value(a: &Value, template: &[u8]) -> Result<Option<Value>, &'static str> {

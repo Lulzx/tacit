@@ -40,6 +40,8 @@ pub struct Counters {
     pub payload_moved: u64,
     pub payload_copied: u64,
     pub kernel_entries: u64,
+    /// Kernel entries per engine (indexed by UIR engine code).
+    pub engine_entries: [u64; 8],
 }
 
 pub struct Kernel {
@@ -60,11 +62,17 @@ pub static mut COUNTERS: Counters = Counters {
     payload_moved: 0,
     payload_copied: 0,
     kernel_entries: 0,
+    engine_entries: [0; 8],
 };
 
 pub fn reset_counters() {
     unsafe {
-        COUNTERS = Counters { payload_moved: 0, payload_copied: 0, kernel_entries: 0 };
+        COUNTERS = Counters {
+            payload_moved: 0,
+            payload_copied: 0,
+            kernel_entries: 0,
+            engine_entries: [0; 8],
+        };
     }
 }
 

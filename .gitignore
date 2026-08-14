@@ -2,3 +2,4 @@
 /build
 /crates/tacit/embedded/*.uir
 Cargo.lock
+.opencode/

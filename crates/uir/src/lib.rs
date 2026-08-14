@@ -47,26 +47,29 @@ pub const OP_GRAPH_NODES: u8 = 10; // source: live-graph node table
 pub const OP_GRAPH_EDGES: u8 = 11; // source: live-graph edge table
 pub const OP_MACHINE_DESC: u8 = 12; // source: machine description table
 pub const OP_READY_SET: u8 = 13; // source: ready set (policy input)
-pub const OP_FILTER: u8 = 14; // table filter by column/value
-pub const OP_SORT_BY: u8 = 15; // table sort by column
-pub const OP_REVERSE: u8 = 16; // reverse rows (or reverse 1d array)
-pub const OP_COUNT: u8 = 17; // row count -> i64 scalar
-pub const OP_FORMAT: u8 = 18; // template + scalar/array -> char array
-pub const OP_FILL: u8 = 19; // shape + fill value -> array
-pub const OP_COPY: u8 = 20; // explicit copy (bench control)
-pub const OP_SEND: u8 = 21; // immutable region-cap share
-pub const OP_COUNTER_BYTES: u8 = 22; // source: payload bytes moved
-pub const OP_COUNTER_COPIED: u8 = 23; // source: payload bytes copied
-pub const OP_COUNTER_ENTRIES: u8 = 24; // source: kernel entries
-pub const OP_ORDER: u8 = 25; // sink: consume ordering (policy output)
-pub const OP_ADD_MUL: u8 = 26; // fused Add-then-Multiply
-pub const OP_ROWS: u8 = 27; // rank-wise map marker (parallel leading axis)
-pub const OP_CAPS: u8 = 28; // source: capabilities table
-pub const OP_NAMES: u8 = 29; // source: node names table
-pub const OP_ZERO: u8 = 30; // reset traffic counters
-pub const OP_FMT_MACHINE: u8 = 31; // render the machine description as text
-pub const OP_PROVENANCE: u8 = 32; // provenance query for a node (const = node id)
-pub const OP_STATS: u8 = 33; // consume a value, report payload bytes + kernel entries
+pub const OP_REVERSE: u8 = 14; // reverse rows (or reverse 1d array)
+pub const OP_COUNT: u8 = 15; // row count -> i64 scalar
+pub const OP_FORMAT: u8 = 16; // template + scalar/array -> char array
+pub const OP_FILL: u8 = 17; // shape + fill value -> array
+pub const OP_COPY: u8 = 18; // explicit copy (bench control)
+pub const OP_SEND: u8 = 19; // immutable region-cap share
+pub const OP_COUNTER_BYTES: u8 = 20; // source: payload bytes moved
+pub const OP_COUNTER_COPIED: u8 = 21; // source: payload bytes copied
+pub const OP_COUNTER_ENTRIES: u8 = 22; // source: kernel entries
+pub const OP_ADD_MUL: u8 = 23; // fused Add-then-Multiply
+pub const OP_ROWS: u8 = 24; // rank-wise map marker (parallel leading axis)
+pub const OP_CAPS: u8 = 25; // source: capabilities table
+pub const OP_NAMES: u8 = 26; // source: node names table
+pub const OP_ZERO: u8 = 27; // reset traffic counters
+pub const OP_FMT_MACHINE: u8 = 28; // render the machine description as text
+pub const OP_PROVENANCE: u8 = 29; // provenance query for a node (const = node id)
+pub const OP_STATS: u8 = 30; // consume a value, report payload bytes + kernel entries
+pub const OP_GRADE_UP: u8 = 31; // ⍏ grade up: row indices in ascending order
+pub const OP_GRADE_DOWN: u8 = 32; // ⍖ grade down: row indices in descending order
+pub const OP_SELECT: u8 = 33; // ⊏ select rows (or elements) by an index vector
+pub const OP_KEEP: u8 = 34; // ▽ keep rows where a mask is nonzero
+pub const OP_PICK: u8 = 35; // ⊡ pick a column of a table (element of a list)
+pub const OP_EQ: u8 = 36; // = elementwise equals -> i64 0/1 mask
 
 pub const NONE: u32 = 0xffff_ffff;
 
@@ -106,8 +109,6 @@ pub fn op_name(op: u8) -> &'static str {
         OP_GRAPH_EDGES => "GraphEdges",
         OP_MACHINE_DESC => "MachineDesc",
         OP_READY_SET => "ReadySet",
-        OP_FILTER => "Filter",
-        OP_SORT_BY => "SortBy",
         OP_REVERSE => "Reverse",
         OP_COUNT => "Count",
         OP_FORMAT => "Format",
@@ -117,7 +118,6 @@ pub fn op_name(op: u8) -> &'static str {
         OP_COUNTER_BYTES => "BytesMoved",
         OP_COUNTER_COPIED => "BytesCopied",
         OP_COUNTER_ENTRIES => "KernelEntries",
-        OP_ORDER => "Order",
         OP_ADD_MUL => "AddMul",
         OP_ROWS => "Rows",
         OP_CAPS => "Caps",
@@ -126,6 +126,12 @@ pub fn op_name(op: u8) -> &'static str {
         OP_FMT_MACHINE => "FmtMachine",
         OP_PROVENANCE => "Provenance",
         OP_STATS => "Stats",
+        OP_GRADE_UP => "GradeUp",
+        OP_GRADE_DOWN => "GradeDown",
+        OP_SELECT => "Select",
+        OP_KEEP => "Keep",
+        OP_PICK => "Pick",
+        OP_EQ => "Equal",
         _ => "?",
     }
 }

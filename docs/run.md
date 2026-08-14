@@ -39,17 +39,25 @@ guest as an event array; type a line and press Enter to see it echoed.
 After the ready banner the guest, unattended:
 
 1. publishes the M4 Pro machine description (`home = uma`, 16 KiB pages,
-   128-byte lines, only the boot CPU online),
+   128-byte lines, the boot CPU online with its NEON unit wired; e-core, SME,
+   GPU, ANE, media, display named but offline),
 2. runs the bundled program `C = (A + B) × D`, printing its live graph
    (Add, Multiply, the edge, caps, parallel axes) and the provenance of `C`
    plus per-node payload-byte counters,
 3. runs one granted agent-shaped transform that summarizes the live graph
    with two fan-out summaries (ordered by the policy),
-4. exercises the subset (reduce, reshape, rank-wise map, the capabilities
-   table),
+4. exercises the subset (reduce, reshape, grade/select/keep, rank-wise map,
+   the capabilities table),
 5. demonstrates effects (propose → simulate → validate → commit; a missing or
    forged display cap leaves the console unchanged) and the operation-array
    ABI (batching with dependencies, unmet dependencies refused),
 6. prints the fusion bench (fused bytes < unfused bytes) and the zero-copy
    send bench (capability share vs explicit copy, unique-region in-place
    mutation vs immutable refusal).
+
+Pure elementwise nodes are placed on the **NEON engine**: the stepper
+dispatches `engine = neon` to a 128-bit Advanced-SIMD kernel, and the fused
+Add-then-Multiply runs as one NEON entry. `&stats` reports a per-engine
+breakdown (e.g. `kernel entries: 1 (neon 1)` for the fused bench). This is
+speed-stack level 6 — engines as placements of the same node — in its first
+slice; SME, GPU, and ANE stay named-but-offline engines.

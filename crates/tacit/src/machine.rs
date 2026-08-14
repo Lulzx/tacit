@@ -11,11 +11,12 @@ pub struct EngineDesc {
     pub kind: u8,
 }
 
-/// Ordered list of engines, matching UIR's engine code order.
+/// Ordered list of engines, matching UIR's engine code order.  Only the boot
+/// CPU is online; its NEON unit is wired and executes the elementwise kernels.
 pub static ENGINES: [EngineDesc; 8] = [
     EngineDesc { name: "p-core", online: true, kind: uir::ENGINE_PCORE },
     EngineDesc { name: "e-core", online: false, kind: uir::ENGINE_ECORE },
-    EngineDesc { name: "neon", online: false, kind: uir::ENGINE_NEON },
+    EngineDesc { name: "neon", online: true, kind: uir::ENGINE_NEON },
     EngineDesc { name: "sme", online: false, kind: uir::ENGINE_SME },
     EngineDesc { name: "gpu", online: false, kind: uir::ENGINE_GPU },
     EngineDesc { name: "ane", online: false, kind: uir::ENGINE_ANE },

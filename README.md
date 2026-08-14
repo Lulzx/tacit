@@ -25,7 +25,13 @@ Boots freestanding under QEMU `aarch64` virt (HVF on an Apple Silicon Mac), no L
 ./qemu.sh    # boot build/tacit.elf under QEMU aarch64 virt (HVF)
 ```
 
-The guest prints a ready banner that names Tacit, publishes the M4 Pro machine description, runs `C = (A + B) × D` while still showing Add, Multiply, and the edge between them, and reports its provenance. One granted agent-shaped transform summarizes the live graph. Fusion (`fused bytes < unfused`) and zero-copy send benches print in-image counters.
+The guest prints a ready banner that names Tacit, publishes the M4 Pro machine
+description, runs `C = (A + B) × D` while still showing Add, Multiply, and the
+edge between them, and reports its provenance. One granted agent-shaped
+transform summarizes the live graph. Pure elementwise work is placed on the
+**NEON engine** (a real 128-bit SIMD kernel; `&stats` reports per-engine
+entries). Fusion (`fused bytes < unfused`) and zero-copy send benches print
+in-image counters.
 
 ## Laws
 
