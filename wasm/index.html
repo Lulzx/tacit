@@ -282,7 +282,7 @@
   }
   .cell:hover { border-color: var(--copper); }
   .cell.on { border-color: var(--copper); background: #2e241c; }
-  .cell .op { font-size: 13px; font-weight: 600; }
+  .cell .op { font-size: 13px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .cell .meta { font-family: var(--mono); font-size: 11px; color: var(--dim); white-space: nowrap; }
   .cell .bar {
     height: 3px;
@@ -331,17 +331,80 @@
     background: var(--panel);
     border: 1px solid var(--line);
     border-radius: 6px;
-    padding: 6px 10px;
-    font-family: var(--mono);
-    font-size: 11px;
+    padding: 8px 10px;
+    font-size: 12px;
     display: grid;
-    grid-template-columns: repeat(6, minmax(0, 1fr));
-    gap: 4px 10px;
-    flex: 0 0 auto;
+    grid-template-columns: minmax(240px, 320px) 1fr;
+    grid-template-rows: auto minmax(0, 1fr);
+    gap: 8px 14px;
+    flex: 0 0 248px;
+    min-height: 0;
     overflow: hidden;
   }
-  .inspector .k { color: var(--dim); display: block; font-family: var(--ui); font-size: 11px; }
-  .inspector .v { color: var(--fg); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .insp-story { display: flex; flex-direction: column; gap: 6px; min-width: 0; overflow: hidden; }
+  .insp-story h3 {
+    margin: 0;
+    font-size: 14px;
+    font-weight: 600;
+    letter-spacing: -0.01em;
+  }
+  .insp-did { color: var(--dim); margin: 0; font-size: 12px; }
+  .insp-inputs { display: flex; flex-wrap: wrap; gap: 4px; }
+  .insp-inputs button {
+    background: var(--raised);
+    color: var(--fg);
+    border: 1px solid var(--line);
+    border-radius: 4px;
+    padding: 3px 7px;
+    font: 11px/1.3 var(--mono);
+    cursor: pointer;
+  }
+  .insp-inputs button:hover { border-color: var(--copper); }
+  .facts {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 3px 12px;
+    font-family: var(--mono);
+    font-size: 11px;
+  }
+  .facts .k { color: var(--dim); font-family: var(--ui); margin-right: 6px; }
+  .insp-value { min-width: 0; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
+  .insp-bar {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 8px;
+    flex: 0 0 auto;
+    margin-bottom: 4px;
+    color: var(--dim);
+    font-size: 11px;
+  }
+  .insp-bar button {
+    background: transparent;
+    color: var(--fg);
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    padding: 2px 8px;
+    font: 11px var(--ui);
+    cursor: pointer;
+  }
+  .insp-bar button:disabled { opacity: .4; cursor: default; }
+  .grid {
+    flex: 1;
+    min-height: 0;
+    overflow: auto;
+    font-family: var(--mono);
+    font-size: 11px;
+  }
+  .grid table { border-collapse: collapse; width: 100%; }
+  .grid th, .grid td {
+    border: 1px solid var(--line);
+    padding: 4px 8px;
+    text-align: right;
+    white-space: nowrap;
+  }
+  .grid th { color: var(--dim); font-weight: 500; text-align: center; }
+  .grid .rowh { color: var(--dim); text-align: center; }
 
   .replay {
     background: transparent;
@@ -371,7 +434,11 @@
     .machine { padding: 8px 10px; }
     .pipe { padding: 5px 6px 8px; }
     .pipe .who { font-size: 11px; }
-    .inspector { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    .inspector {
+      grid-template-columns: 1fr;
+      flex: 0 0 180px;
+    }
+    .insp-story { max-height: 72px; }
   }
 
   @media (prefers-reduced-motion: reduce) {
@@ -466,6 +533,10 @@ const OP = {
 };
 const DTYPE = {0:'i64',1:'f32',2:'u8'};
 const ENGINE = {0:'p-core',1:'e-core',2:'neon',3:'sme',4:'gpu'};
+const HOME = {0:'uma'};
+const CAP = {0:'display',1:'keyboard',255:'none'};
+const NONE = 0xffffffff;
+const PAGE = 64;
 const KIND_COLOR = { fill:'#4a6b8a', compute:'#3f7a68', fused:'#c4784a', effect:'#7a6b8f', source:'#c9a25a' };
 
 let wasm = null, memory = null;
@@ -575,14 +646,23 @@ function parseStep(blob) {
   let o = 1;
   const id = dv.getUint32(o, true); o += 4;
   const op = blob[o++]; const dtype = blob[o++]; const rank = blob[o++]; const engine = blob[o++];
+  const pure = blob[o++]; const home = blob[o++]; const cap = blob[o++]; const parallel = blob[o++];
   const shape = [];
   for (let k = 0; k < 4; k++) { shape.push(dv.getUint32(o, true)); o += 4; }
+  const in0 = dv.getUint32(o, true); o += 4;
+  const in1 = dv.getUint32(o, true); o += 4;
+  const in2 = dv.getUint32(o, true); o += 4;
   const bytes = dv.getUint32(o, true); o += 4;
+  const elems = dv.getUint32(o, true); o += 4;
+  const checksum = dv.getBigUint64(o, true); o += 8;
+  const vmin = dv.getFloat64(o, true); o += 8;
+  const vmax = dv.getFloat64(o, true); o += 8;
+  const vsum = dv.getFloat64(o, true); o += 8;
   const nameLen = dv.getUint32(o, true); o += 4;
   const name = dec.decode(blob.subarray(o, o + nameLen)); o += nameLen;
   const prevLen = dv.getUint32(o, true); o += 4;
   const preview = blob.subarray(o, o + prevLen);
-  return { status, id, op, dtype, rank, engine, shape, bytes, name, preview };
+  return { status, id, op, dtype, rank, engine, pure, home, cap, parallel, shape, in0, in1, in2, bytes, elems, checksum, vmin, vmax, vsum, name, preview };
 }
 
 function interpretHeader(val) {
@@ -606,15 +686,49 @@ function interpretHeader(val) {
   return { dtype, rank, shape: shape.slice(0, rank), elems, vals, bytes: data.length };
 }
 
-function previewList(step) {
-  const elems = step.rank === 0 ? 1 : step.shape.slice(0, step.rank).reduce((a,b)=>a*b,1);
-  const n = Math.min(elems, 6);
-  const data = new Uint8Array(step.preview); // aligned copy
+function decodeNums(dtype, bytes, count) {
+  const data = new Uint8Array(bytes);
+  const n = Math.max(0, count);
   try {
-    if (step.dtype === 1) return Array.from(new Float32Array(data.buffer, 0, Math.min(n, Math.floor(data.length/4)))).map(x => +x.toFixed(4));
-    if (step.dtype === 0) return Array.from(new BigInt64Array(data.buffer, 0, Math.min(n, Math.floor(data.length/8)))).map(String);
+    if (dtype === 1) return Array.from(new Float32Array(data.buffer, 0, Math.min(n, Math.floor(data.length/4)))).map(x => +x.toFixed(4));
+    if (dtype === 0) return Array.from(new BigInt64Array(data.buffer, 0, Math.min(n, Math.floor(data.length/8)))).map(String);
     return Array.from(data.subarray(0, n));
   } catch (_) { return []; }
+}
+
+function previewList(step) {
+  const elems = step.elems != null ? step.elems : (step.rank === 0 ? 1 : step.shape.slice(0, step.rank).reduce((a,b)=>a*b,1));
+  return decodeNums(step.dtype, step.preview, Math.min(elems, 8));
+}
+
+function didStory(step) {
+  const sh = shapeStr(step.rank, step.shape);
+  const ins = [step.in0, step.in1, step.in2].filter(x => x !== NONE).map(id => {
+    const s = lastSteps.find(n => n.id === id);
+    return s ? nodeTitle(s.op, s.name) : ('#' + id);
+  });
+  switch (step.op) {
+    case 0: return 'Loaded a constant ' + DTYPE[step.dtype] + ' ' + sh + '.';
+    case 17: return 'Filled ' + (step.elems||0).toLocaleString() + ' ' + DTYPE[step.dtype] + ' cells as ' + sh + '.';
+    case 1: return 'Elementwise add of ' + ins.join(' and ') + ' → ' + sh + '.';
+    case 2: return 'Elementwise subtract of ' + ins.join(' and ') + ' → ' + sh + '.';
+    case 3: return 'Elementwise multiply of ' + ins.join(' and ') + ' → ' + sh + '.';
+    case 4: return 'Elementwise divide of ' + ins.join(' and ') + ' → ' + sh + '.';
+    case 23: return 'Fused (a + b) × d. The sum was never stored. Result ' + sh + '.';
+    case 7: return 'Same ' + (step.elems||0).toLocaleString() + ' elements, new shape ' + sh + '.';
+    case 6: return 'Reduced ' + (ins[0]||'input') + ' by sum to a scalar.';
+    case 14: return 'Reversed the leading axis of ' + (ins[0]||'input') + '.';
+    case 15: return 'Counted the leading axis of ' + (ins[0]||'input') + '.';
+    case 31: return 'Row indices that sort ' + (ins[0]||'input') + ' ascending.';
+    case 32: return 'Row indices that sort ' + (ins[0]||'input') + ' descending.';
+    case 33: return 'Select rows. Inputs: ' + (ins.join(', ') || '—') + ' → ' + sh + '.';
+    case 34: return 'Kept rows of ' + (ins[0]||'data') + ' where the mask is nonzero.';
+    case 35: return 'Picked one row/column of ' + (ins[0]||'data') + '.';
+    case 36: return 'Elementwise equals → i64 0/1 mask ' + sh + '.';
+    case 44: return 'f32 matrix multiply → ' + sh + '. Compiler placed this on SME.';
+    case 45: return 'Coupled two vectors into a [2, n] table.';
+    default: return (OP[step.op]||'op') + ' produced ' + DTYPE[step.dtype] + ' ' + sh + '.';
+  }
 }
 
 function shapeStr(rank, shape) {
@@ -636,10 +750,18 @@ function layout(nodes) {
   return { depth, pos, maxDepth: Math.max(0, ...depth) };
 }
 
+function nodeTitle(op, name) {
+  const opName = OP[op] || '?';
+  const n = (name || '').trim();
+  if (!n || n.toLowerCase() === opName.toLowerCase()) return opName;
+  return opName + ' · ' + n;
+}
+
 function renderGraph(nodes, activeId) {
   if (!nodes.length) return '';
   const { pos, maxDepth } = layout(nodes);
   const W = 176, H = 86, PAD = 24;
+  const boxW = W - 20, boxH = H - 16;
   const maxY = Math.max(1, ...Object.values(pos).map(p => p.y + 1));
   const svgW = (maxDepth + 1) * W + PAD * 2;
   const svgH = maxY * H + PAD * 2;
@@ -660,13 +782,18 @@ function renderGraph(nodes, activeId) {
     const x = p.x * W + PAD, y = p.y * H + PAD;
     const color = KIND_COLOR[kindOf(n.op)];
     const on = activeId === n.id ? ' on' : '';
-    const label = (OP[n.op] || '?') + (n.name ? ' · ' + n.name : '');
+    const label = nodeTitle(n.op, n.name);
     const sub = `${shapeStr(n.rank, n.shape)} · ${ENGINE[n.engine] || '?'}`;
+    const clip = 'clip-n' + n.id;
     s += `<g class="node${on}" data-id="${n.id}" transform="translate(${x},${y})" style="cursor:pointer">`;
-    s += `<rect width="${W - 20}" height="${H - 16}" style="stroke:${color}"/>`;
+    s += `<clipPath id="${clip}"><rect width="${boxW}" height="${boxH}" rx="6"/></clipPath>`;
+    s += `<rect width="${boxW}" height="${boxH}" style="stroke:${color}"/>`;
+    s += `<g clip-path="url(#${clip})">`;
     s += `<text class="op" x="10" y="22">${esc(label)}</text>`;
     s += `<text class="sub" x="10" y="40">${esc(sub)}</text>`;
     s += `<text class="sub" x="10" y="56">${DTYPE[n.dtype] || '?'}${n.pure ? ' · pure' : ''}</text>`;
+    s += `</g>`;
+    s += `<title>${esc(label)}</title>`;
     s += `</g>`;
   }
   s += `</svg>`;
@@ -718,26 +845,133 @@ function renderTape(steps, activeId) {
     const share = s.ms / max;
     const on = activeId === s.id ? ' on' : '';
     return `<button type="button" class="cell${on}" data-id="${s.id}" style="flex-grow:${(1 + share * 2).toFixed(2)}">
-      <span class="op" style="color:${KIND_COLOR[kindOf(s.op)]}">${esc(OP[s.op]||'?')}${s.name ? ' · '+esc(s.name) : ''}</span>
+      <span class="op" style="color:${KIND_COLOR[kindOf(s.op)]}">${esc(nodeTitle(s.op, s.name))}</span>
       <span class="meta">${fmtTime(s.ms)}<br>${fmtBytes(s.bytes)}<br>${esc(shapeStr(s.rank, s.shape))}</span>
       <span class="bar"><i style="--share:${Math.round(share*100)}%"></i></span>
     </button>`;
   }).join('');
 }
 
-function showInspector(step) {
+let peekOff = 0;
+
+function showInspector(step, offset) {
   const box = document.getElementById('inspector');
   if (!step) { box.hidden = true; return; }
-  const prev = previewList(step);
+  if (offset == null) offset = 0;
+  peekOff = offset;
+  const fireMs = lastSteps.reduce((a, s) => a + s.ms, 0) || 1;
+  const pct = ((step.ms || 0) / fireMs * 100).toFixed(1);
+  const mean = step.elems ? (step.vsum / step.elems) : 0;
+  const cap = step.cap === 0xff ? 'none' : (CAP[step.cap] || String(step.cap));
+  const inputs = [step.in0, step.in1, step.in2].filter(x => x !== NONE);
+  const peek = peekNode(step.id, offset, PAGE);
+  const count = peek ? peek.count : decodeNums(step.dtype, step.preview, PAGE).length;
+  const vals = peek ? decodeNums(peek.dtype, peek.window, peek.count)
+                    : decodeNums(step.dtype, step.preview, PAGE);
+  const elems = step.elems || 0;
+  const from = elems ? offset + 1 : 0;
+  const to = elems ? Math.min(offset + count, elems) : 0;
+  const cols = step.rank >= 2 ? step.shape[1] : (step.rank === 1 ? Math.min(8, elems) : 1);
+
   box.hidden = false;
-  box.innerHTML = [
-    ['Op', (OP[step.op]||'?') + (step.name ? ' · '+step.name : '')],
-    ['Time', fmtTime(step.ms)],
-    ['Shape', DTYPE[step.dtype] + ' ' + shapeStr(step.rank, step.shape)],
-    ['Bytes', fmtBytes(step.bytes)],
-    ['Placed on', ENGINE[step.engine] || '?'],
-    ['Preview', prev.length ? '['+prev.join(', ')+']' : '·']
-  ].map(([k,v]) => `<div><span class="k">${k}</span><span class="v">${esc(v)}</span></div>`).join('');
+  box.innerHTML =
+    `<div class="insp-story">
+      <h3>${esc(nodeTitle(step.op, step.name))}</h3>
+      <p class="insp-did">${esc(didStory(step))}</p>
+      <div class="insp-inputs">${inputs.length
+        ? inputs.map(id => {
+            const s = lastSteps.find(n => n.id === id);
+            const label = s ? nodeTitle(s.op, s.name) : '#'+id;
+            return `<button type="button" data-in="${id}">← ${esc(label)}</button>`;
+          }).join('')
+        : '<span class="insp-did">no inputs</span>'}</div>
+      <div class="facts">
+        <div><span class="k">id</span> ${step.id}</div>
+        <div><span class="k">time</span> ${fmtTime(step.ms)} · ${pct}%</div>
+        <div><span class="k">engine</span> ${esc(ENGINE[step.engine]||'?')}</div>
+        <div><span class="k">home</span> ${esc(HOME[step.home]||'uma')}</div>
+        <div><span class="k">pure</span> ${step.pure ? 'yes' : 'no'}</div>
+        <div><span class="k">cap</span> ${esc(cap)}</div>
+        <div><span class="k">axis</span> ${step.parallel ? 'par '+step.parallel : 'none'}</div>
+        <div><span class="k">bytes</span> ${fmtBytes(step.bytes)}</div>
+        <div><span class="k">min</span> ${fmtNum(step.vmin)}</div>
+        <div><span class="k">max</span> ${fmtNum(step.vmax)}</div>
+        <div><span class="k">mean</span> ${fmtNum(mean)}</div>
+        <div><span class="k">hash</span> ${step.checksum != null ? BigInt(step.checksum).toString(16).slice(-8) : '·'}</div>
+      </div>
+    </div>
+    <div class="insp-value">
+      <div class="insp-bar">
+        <span>${DTYPE[step.dtype]} ${esc(shapeStr(step.rank, step.shape))} · ${elems.toLocaleString()} elems · ${from}–${to}</span>
+        <span>
+          <button type="button" id="peek-prev" ${offset<=0?'disabled':''}>prev</button>
+          <button type="button" id="peek-next" ${offset+PAGE>=elems?'disabled':''}>next</button>
+        </span>
+      </div>
+      <div class="grid">${renderValueGrid(step, vals, offset, cols)}</div>
+    </div>`;
+
+  const prev = document.getElementById('peek-prev');
+  const next = document.getElementById('peek-next');
+  if (prev) prev.onclick = () => showInspector(step, Math.max(0, offset - PAGE));
+  if (next) next.onclick = () => showInspector(step, offset + PAGE);
+  box.querySelectorAll('[data-in]').forEach(b => {
+    b.onclick = () => selectNode(+b.dataset.in);
+  });
+}
+
+function fmtNum(x) {
+  if (x == null || Number.isNaN(x)) return '·';
+  if (Math.abs(x) >= 1e6 || (Math.abs(x) < 1e-4 && x !== 0)) return x.toExponential(3);
+  return (Math.round(x * 1e4) / 1e4).toString();
+}
+
+function renderValueGrid(step, vals, offset, cols) {
+  if (!vals.length) return '<div class="empty">no values</div>';
+  if (step.rank <= 1 || !cols || cols < 1) {
+    return '<table><tr>' + vals.map(v => `<td>${esc(v)}</td>`).join('') + '</tr></table>';
+  }
+  let html = '<table><tr><th></th>';
+  const c = Math.min(cols, 12);
+  for (let j = 0; j < c; j++) html += `<th>${j}</th>`;
+  if (cols > c) html += '<th>…</th>';
+  html += '</tr>';
+  const rows = Math.ceil(vals.length / cols);
+  for (let r = 0; r < rows; r++) {
+    const rowIdx = Math.floor(offset / cols) + r;
+    html += `<tr><th class="rowh">${rowIdx}</th>`;
+    for (let j = 0; j < c; j++) {
+      const v = vals[r * cols + j];
+      html += `<td>${v == null ? '' : esc(v)}</td>`;
+    }
+    if (cols > c) html += '<td>…</td>';
+    html += '</tr>';
+  }
+  return html + '</table>';
+}
+
+function peekNode(id, offset, count) {
+  if (!wasm || !wasm.uiua_peek) return null;
+  const lenPtr = 2048;
+  new Uint32Array(memory.buffer, lenPtr, 1)[0] = 0;
+  const ptr = wasm.uiua_peek(id, offset, count, lenPtr);
+  const len = new Uint32Array(memory.buffer, lenPtr, 1)[0];
+  if (ptr === 0 || len === 0) return null;
+  const blob = new Uint8Array(memory.buffer.slice(ptr, ptr + len));
+  wasm.uiua_free(ptr, len);
+  if (blob[0] !== 1) return null;
+  const dv = new DataView(blob.buffer, blob.byteOffset);
+  let o = 1;
+  const pid = dv.getUint32(o, true); o += 4;
+  const dtype = blob[o++]; const rank = blob[o++];
+  const shape = [];
+  for (let k = 0; k < 4; k++) { shape.push(dv.getUint32(o, true)); o += 4; }
+  const elems = dv.getUint32(o, true); o += 4;
+  const bytes = dv.getUint32(o, true); o += 4;
+  const off = dv.getUint32(o, true); o += 4;
+  const cnt = dv.getUint32(o, true); o += 4;
+  const window = blob.subarray(o);
+  return { id: pid, dtype, rank, shape, elems, bytes, offset: off, count: cnt, window };
 }
 
 function selectNode(id) {
@@ -746,7 +980,7 @@ function selectNode(id) {
   const wrap = document.getElementById('graph-wrap');
   wrap.innerHTML = renderGraph(lastNodes, id);
   bindGraphClicks();
-  showInspector(step);
+  showInspector(step, 0);
 }
 
 function bindGraphClicks() {
@@ -857,10 +1091,14 @@ async function run() {
 
     if (val) {
       const info = interpretHeader(val);
+      const last = steps[steps.length-1];
       result.innerHTML = '<span class="ok">last value</span>\n'
         + DTYPE[info.dtype] + ' ' + shapeStr(info.rank, info.shape)
         + ' · ' + fmtBytes(info.bytes) + '\n'
-        + '[' + info.vals.join(', ') + (info.elems > info.vals.length ? ', …' : '') + ']';
+        + '[' + info.vals.join(', ') + (info.elems > info.vals.length ? ', …' : '') + ']'
+        + (last ? '\nmin '+fmtNum(last.vmin)+'  max '+fmtNum(last.vmax) : '');
+      result.style.cursor = 'pointer';
+      result.onclick = () => { if (lastSteps.length) selectNode(lastSteps[lastSteps.length-1].id); };
     } else if (!result.querySelector('.err')) {
       result.innerHTML = '<span class="err">' + esc(lastError() || 'no value') + '</span>';
     }

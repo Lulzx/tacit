@@ -160,8 +160,9 @@ pub extern "C" fn uiua_load(uir_ptr: *const u8, uir_len: usize) -> i32 {
 }
 
 /// Fire the next node. Buffer: u8 status (0=done, 1=ok, 2=err), then
-/// u32 id, u8 op, u8 dtype, u8 rank, u8 engine, 4×u32 shape, u32 bytes,
-/// u32 name_len, name, u32 preview_len, preview.
+/// u32 id, u8 op, dtype, rank, engine, pure, home, cap, parallel,
+/// 4×u32 shape, u32 in0, in1, in2, bytes, elems, u64 checksum,
+/// f64 vmin, vmax, vsum, u32 name_len, name, u32 preview_len, preview.
 #[no_mangle]
 pub extern "C" fn uiua_step(out_len: *mut usize) -> *mut u8 {
     if out_len.is_null() {
@@ -190,10 +191,22 @@ pub extern "C" fn uiua_step(out_len: *mut usize) -> *mut u8 {
                 out.push(info.dtype);
                 out.push(info.rank);
                 out.push(info.engine);
+                out.push(if info.pure { 1 } else { 0 });
+                out.push(info.home);
+                out.push(info.cap);
+                out.push(info.parallel);
                 for d in info.shape {
                     out.extend_from_slice(&d.to_le_bytes());
                 }
+                out.extend_from_slice(&info.in0.to_le_bytes());
+                out.extend_from_slice(&info.in1.to_le_bytes());
+                out.extend_from_slice(&info.in2.to_le_bytes());
                 out.extend_from_slice(&info.bytes.to_le_bytes());
+                out.extend_from_slice(&info.elems.to_le_bytes());
+                out.extend_from_slice(&info.checksum.to_le_bytes());
+                out.extend_from_slice(&info.vmin.to_le_bytes());
+                out.extend_from_slice(&info.vmax.to_le_bytes());
+                out.extend_from_slice(&info.vsum.to_le_bytes());
                 out.extend_from_slice(&(info.name.len() as u32).to_le_bytes());
                 out.extend_from_slice(&info.name);
                 out.extend_from_slice(&(info.preview.len() as u32).to_le_bytes());
@@ -203,6 +216,48 @@ pub extern "C" fn uiua_step(out_len: *mut usize) -> *mut u8 {
             Err(e) => {
                 set_err(&e);
                 leak_vec(vec![2u8], out_len)
+            }
+        }
+    })
+}
+
+/// Window into a materialized node: u8 ok, u32 id, u8 dtype, rank,
+/// 4×u32 shape, u32 elems, bytes, offset, count, then count elements.
+#[no_mangle]
+pub extern "C" fn uiua_peek(id: u32, offset: u32, count: u32, out_len: *mut usize) -> *mut u8 {
+    if out_len.is_null() {
+        return std::ptr::null_mut();
+    }
+    SESSION.with(|s| {
+        let slot = s.borrow();
+        let session = match slot.as_ref() {
+            Some(sess) => sess,
+            None => {
+                set_err("no program loaded");
+                return leak_vec(vec![0u8], out_len);
+            }
+        };
+        match session.peek(id, offset, count) {
+            Ok(p) => {
+                clear_err();
+                let mut out = Vec::new();
+                out.push(1u8);
+                out.extend_from_slice(&p.id.to_le_bytes());
+                out.push(p.dtype);
+                out.push(p.rank);
+                for d in p.shape {
+                    out.extend_from_slice(&d.to_le_bytes());
+                }
+                out.extend_from_slice(&p.elems.to_le_bytes());
+                out.extend_from_slice(&p.bytes.to_le_bytes());
+                out.extend_from_slice(&p.offset.to_le_bytes());
+                out.extend_from_slice(&p.count.to_le_bytes());
+                out.extend_from_slice(&p.window);
+                leak_vec(out, out_len)
+            }
+            Err(e) => {
+                set_err(&e);
+                leak_vec(vec![0u8], out_len)
             }
         }
     })

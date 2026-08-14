@@ -69,8 +69,33 @@ pub struct StepInfo {
     pub rank: u8,
     pub shape: [u32; 4],
     pub bytes: u32,
+    pub elems: u32,
+    pub in0: u32,
+    pub in1: u32,
+    pub in2: u32,
+    pub pure: bool,
+    pub home: u8,
+    pub cap: u8,
+    pub parallel: u8,
+    pub checksum: u64,
+    pub vmin: f64,
+    pub vmax: f64,
+    pub vsum: f64,
     pub name: Vec<u8>,
     pub preview: Vec<u8>,
+}
+
+/// A window into a materialized node value.
+pub struct Peek {
+    pub id: u32,
+    pub dtype: u8,
+    pub rank: u8,
+    pub shape: [u32; 4],
+    pub elems: u32,
+    pub bytes: u32,
+    pub offset: u32,
+    pub count: u32,
+    pub window: Vec<u8>,
 }
 
 /// A loaded program that can be stepped one node at a time so the
@@ -102,7 +127,8 @@ impl Session {
         let i = self.next;
         let nd = self.prog.nodes[i];
         let v = step(&self.prog, &nd, &self.vals)?;
-        let preview_n = v.data.len().min(32);
+        let (vmin, vmax, vsum) = value_stats(&v);
+        let preview_n = v.data.len().min(256);
         let info = StepInfo {
             id: nd.id,
             op: nd.op,
@@ -111,6 +137,18 @@ impl Session {
             rank: v.rank,
             shape: to_u32_shape(&v.shape),
             bytes: v.byte_len() as u32,
+            elems: v.elems() as u32,
+            in0: nd.in0,
+            in1: nd.in1,
+            in2: nd.in2,
+            pure: nd.pure,
+            home: nd.home,
+            cap: nd.cap_need,
+            parallel: nd.parallel_axis,
+            checksum: fnv1a(&v.data),
+            vmin,
+            vmax,
+            vsum,
             name: self.prog.names[i].clone(),
             preview: v.data[..preview_n].to_vec(),
         };
@@ -121,6 +159,75 @@ impl Session {
 
     pub fn last_value(&self) -> Option<&Value> {
         self.vals.iter().rev().find_map(|v| v.as_ref())
+    }
+
+    pub fn peek(&self, id: u32, offset: u32, count: u32) -> Result<Peek, String> {
+        let v = self
+            .vals
+            .get(id as usize)
+            .and_then(|x| x.as_ref())
+            .ok_or_else(|| "no value".to_string())?;
+        let es = v.elem_size();
+        let elems = v.elems() as u32;
+        let off = offset.min(elems);
+        let n = count.min(elems.saturating_sub(off));
+        let start = off as usize * es;
+        let end = start + n as usize * es;
+        Ok(Peek {
+            id,
+            dtype: v.dtype,
+            rank: v.rank,
+            shape: to_u32_shape(&v.shape),
+            elems,
+            bytes: v.byte_len() as u32,
+            offset: off,
+            count: n,
+            window: v.data[start..end].to_vec(),
+        })
+    }
+}
+
+fn value_stats(v: &Value) -> (f64, f64, f64) {
+    let n = v.elems();
+    if n == 0 {
+        return (0.0, 0.0, 0.0);
+    }
+    match v.dtype {
+        DTYPE_F32 => {
+            let mut min = f32::INFINITY;
+            let mut max = f32::NEG_INFINITY;
+            let mut sum = 0.0f64;
+            for c in v.data.chunks_exact(4) {
+                let x = f32::from_bits(u32::from_le_bytes([c[0], c[1], c[2], c[3]]));
+                if x < min { min = x; }
+                if x > max { max = x; }
+                sum += x as f64;
+            }
+            (min as f64, max as f64, sum)
+        }
+        DTYPE_I64 => {
+            let mut min = i64::MAX;
+            let mut max = i64::MIN;
+            let mut sum = 0.0f64;
+            for c in v.data.chunks_exact(8) {
+                let x = i64::from_le_bytes([c[0], c[1], c[2], c[3], c[4], c[5], c[6], c[7]]);
+                if x < min { min = x; }
+                if x > max { max = x; }
+                sum += x as f64;
+            }
+            (min as f64, max as f64, sum)
+        }
+        _ => {
+            let mut min = u8::MAX;
+            let mut max = u8::MIN;
+            let mut sum = 0.0f64;
+            for &x in &v.data {
+                if x < min { min = x; }
+                if x > max { max = x; }
+                sum += x as f64;
+            }
+            (min as f64, max as f64, sum)
+        }
     }
 }
 
