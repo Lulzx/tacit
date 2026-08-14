@@ -246,7 +246,12 @@ impl Session {
             self.store
                 .write_file(&mut self.cwd, &name, out.as_bytes(), "text/plain")
                 .map_err(err)?;
-            let labels: Vec<String> = self.last_graph.iter().map(|n| n.label.clone()).collect();
+            let labels: Vec<String> = self
+                .last_graph
+                .iter()
+                .map(|n| n.label.clone())
+                .filter(|l| l.as_str() != name && l.as_str() != "Bind")
+                .collect();
             let inputs = pipeline_inputs(tokens);
             let _ = self.store.note(&self.cwd, &name, labels, inputs);
             return Ok(Outcome::Handled(String::new()));
@@ -593,6 +598,7 @@ mod tests {
         handled(&mut s, "cat numbers | parse | square | sum > total");
         let w = handled(&mut s, "why total");
         assert!(w.starts_with("total"), "{w}");
+        assert!(!w.contains("← total"), "{w}");
         assert!(w.contains("← Sum"), "{w}");
         assert!(w.contains("← Parse"), "{w}");
         assert!(w.contains("← numbers") || w.contains("numbers"), "{w}");
