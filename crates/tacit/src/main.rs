@@ -14,6 +14,7 @@ mod machine;
 mod mem;
 mod mmu;
 mod objects;
+mod pac;
 mod shell;
 mod sme;
 mod stepper;
@@ -163,6 +164,7 @@ pub extern "C" fn kernel_main(fdt_ptr: usize) -> ! {
 
     // --- machine description + microkernel (one Realm, starter caps, quota) ---
     let quota = fb_addr - image_end;
+    pac::init(); // capability tokens become PACGA-signed when FEAT_PACGA exists
     kernel::init(quota);
     sme::enable();
     gic::init();
@@ -301,6 +303,11 @@ fn display_cap_token() -> u64 {
 /// ABI.  This is a test of the microkernel, not policy, so it lives in Rust.
 fn kernel_selftest() {
     console_write_str("--- kernel self-test (capability enforcement) ---\n");
+    console_write_str(if crate::pac::enabled() {
+        "  capability tokens: PACGA-signed (pacga) (ok)\n"
+    } else {
+        "  capability tokens: software tokens (no FEAT_PACGA)\n"
+    });
 
     // revoke -> write rejected, console unchanged
     let tok = display_cap_token();
@@ -329,6 +336,18 @@ fn kernel_selftest() {
         console_write_str("  forged integer as display cap: rejected (ok)\n");
     } else {
         console_write_str("  forged integer as display cap: FAILED\n");
+    }
+
+    // one flipped bit in a genuine token must not authenticate
+    let flipped = display_cap_token() ^ 1;
+    let flip = alloc::vec![kernel::Op::new(kernel::OpKind::DisplaySend {
+        cap: flipped,
+        text: alloc::vec::Vec::from(&b"flipped"[..]),
+    })];
+    if matches!(kernel::submit(0, &flip)[0], kernel::OpResult::CapError) {
+        console_write_str("  bit-flipped display cap: rejected (ok)\n");
+    } else {
+        console_write_str("  bit-flipped display cap: FAILED\n");
     }
 
     // operation-array batching with a dependency, and an unmet dependency

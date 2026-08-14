@@ -49,9 +49,10 @@ After the ready banner the guest, unattended:
    `⊏ ⍖ ⊡ 1`, select on grade-down of the picked priority column),
 4. exercises the subset (reduce, reshape, grade/select/keep, rank-wise map,
    the capabilities table),
-5. demonstrates effects (propose → simulate → validate → commit; a missing or
-   forged display cap leaves the console unchanged) and the operation-array
-   ABI (batching with dependencies, unmet dependencies refused),
+5. demonstrates effects (propose → simulate → validate → commit; a missing,
+   forged, or bit-flipped display cap leaves the console unchanged) and the
+   operation-array ABI (batching with dependencies, unmet dependencies
+   refused),
 6. exercises the content-addressed object store (`id = H(data)`: storing the
    same value twice deduplicates to the same id; loading returns it),
 7. demonstrates deterministic replay: clock reads are recorded, and
@@ -73,6 +74,16 @@ exposes): on this Mac both HVF and TCG `-cpu max` report it online, and the
 matmul bench shows `kernel entries: 1 (sme 1)`.  The first slice enters and
 leaves streaming mode (`smstart`/`smstop`); the ZA-accumulating tile kernel
 is the next slice.  GPU and ANE stay named-but-offline engines.
+
+## Capability tokens are PAC-signed
+
+Capability tokens are the `pacga` MAC of a kernel-generated nonce under a
+kernel-only GA key (FEAT_PACGA): arithmetic cannot mint one, and a single
+flipped bit fails the recomputed MAC.  Presence is probed from
+`ID_AA64ISAR1_EL1.GPI` — on this Mac both HVF and TCG `-cpu max` report it,
+and the kernel self-test prints `capability tokens: PACGA-signed (pacga)`.
+When FEAT_PACGA is absent the kernel falls back to software unforgeability
+(random table tokens), so the capability spec does not change.
 
 ## Uiua shell
 

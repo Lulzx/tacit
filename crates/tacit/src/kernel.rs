@@ -26,6 +26,8 @@ pub struct Cap {
     pub kind: u8,
     pub region: i32, // region index, or -1
     pub rights: u8,
+    pub nonce: u64,    // the signed value (PAC) or the software token
+    pub modifier: u64, // PAC modifier; unused when PAC is off
 }
 
 pub struct Realm {
@@ -82,9 +84,9 @@ pub fn counters() -> Counters {
 
 fn next_token() -> u64 {
     unsafe {
-        // xorshift64* — a non-cryptographic PRNG.  Tokens are unforgeable in
-        // practice because a Realm can only use caps it was granted; software
-        // unforgeability on virt does not require PAC.
+        // xorshift64* — a non-cryptographic PRNG.  With FEAT_PACGA enabled
+        // the token is `pacga`-signed under a kernel-only key, so arithmetic
+        // cannot mint one even in this single-EL guest.
         let mut x = K.prng;
         x ^= x >> 12;
         x ^= x << 25;
@@ -94,10 +96,30 @@ fn next_token() -> u64 {
     }
 }
 
+/// A fresh random 64-bit value (also used for the PAC GA key).
+pub fn rand64() -> u64 {
+    next_token()
+}
+
+/// The PAC modifier for a capability record: kind and rights in the high
+/// bits, the region index below, so distinct capabilities authenticate
+/// against distinct modifiers.
+fn cap_modifier(kind: u8, region: i32, rights: u8) -> u64 {
+    ((kind as u64) << 48)
+        | (((rights as u64) & 0xff) << 32)
+        | ((region as u32) as u64)
+}
+
 pub fn mint(kind: u8, region: i32, rights: u8) -> u64 {
     unsafe {
-        let token = next_token();
-        K.caps.push(Cap { token, kind, region, rights });
+        let modifier = cap_modifier(kind, region, rights);
+        let nonce = next_token();
+        let token = if crate::pac::enabled() {
+            crate::pac::sign(nonce, modifier)
+        } else {
+            nonce
+        };
+        K.caps.push(Cap { token, kind, region, rights, nonce, modifier });
         token
     }
 }
@@ -105,7 +127,13 @@ pub fn mint(kind: u8, region: i32, rights: u8) -> u64 {
 pub fn lookup(token: u64) -> Option<&'static Cap> {
     unsafe {
         for c in K.caps.iter() {
-            if c.token == token {
+            if crate::pac::enabled() {
+                // Recompute the PACGA MAC over the stored nonce: a presented
+                // token is valid only if it is exactly the signed nonce.
+                if crate::pac::check(token, c.nonce, c.modifier) {
+                    return Some(c);
+                }
+            } else if c.token == token {
                 return Some(c);
             }
         }

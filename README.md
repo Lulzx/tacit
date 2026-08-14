@@ -30,10 +30,12 @@ description, runs `C = (A + B) × D` while still showing Add, Multiply, and the
 edge between them, and reports its provenance. One granted agent-shaped
 transform summarizes the live graph. Pure elementwise work is placed on the
 **NEON engine** (a real 128-bit SIMD kernel; `&stats` reports per-engine
-entries). Fusion (`fused bytes < unfused`) and zero-copy send benches print
-in-image counters. After the benches the guest drops into an interactive
-**Uiua shell**: it compiles typed Uiua lines to UIR in-guest (the same
-`crates/compile` source the host uses — the start of the self-hosted
+entries), and `&matmul` runs on the **SME engine** (streaming mode, probe-
+gated). Capability tokens are **PACGA-signed** under a kernel-only key when
+FEAT_PACGA is present. Fusion (`fused bytes < unfused`) and zero-copy send
+benches print in-image counters. After the benches the guest drops into an
+interactive **Uiua shell**: it compiles typed Uiua lines to UIR in-guest (the
+same `crates/compile` source the host uses — the start of the self-hosted
 compiler) and steps them, so bindings persist as values.
 
 ## Laws
