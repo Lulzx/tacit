@@ -472,6 +472,7 @@ C ← × D + B A</textarea>
     <div class="presets" id="presets">
       <button type="button" data-src="A ← ↯ [256 256] 1.0&#10;B ← ↯ [256 256] 2.0&#10;D ← ↯ [256 256] 3.0&#10;C ← × D + B A" aria-pressed="true">fusion</button>
       <button type="button" data-src="A ← ↯ [2048 2048] 1.0&#10;B ← ↯ [2048 2048] 2.0&#10;D ← ↯ [2048 2048] 3.0&#10;C ← × D + B A">fusion 2k</button>
+      <button type="button" title="Fill, fuse, 768×768 matmul, reverse, reduce" data-src="W ← ↯ [768 768] 1.0&#10;X ← ↯ [768 768] 2.0&#10;Y ← ↯ [768 768] 0.25&#10;Z ← × Y + X W&#10;P ← &amp;matmul Z Z&#10;V ← ⇌ P&#10;K ← /+ V">pipeline</button>
       <button type="button" data-src="A ← ↯ [64 64] 1.5&#10;B ← ↯ [64 64] 2.0&#10;C ← &amp;matmul A B">matmul</button>
       <button type="button" data-src="T ← ↯ [4 2] [3 1 4 1 5 9 2 6]&#10;⊏ ⍖ T">grade</button>
       <button type="button" data-src="+ 2 3">+ 2 3</button>
