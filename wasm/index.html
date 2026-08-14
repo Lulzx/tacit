@@ -1,0 +1,276 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tacit — the array-language OS in your browser</title>
+<style>
+  :root {
+    --bg: #0d1117; --panel: #161b22; --panel2: #1c2128; --border: #2d333b;
+    --fg: #e6edf3; --dim: #8b949e; --accent: #58a6ff; --green: #3fb950;
+    --red: #f85149; --purple: #bc8cff; --yellow: #d29922;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--fg);
+    font: 14px/1.5 -apple-system, "SF Mono", Menlo, Consolas, monospace;
+  }
+  header {
+    padding: 18px 24px; border-bottom: 1px solid var(--border);
+    display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap;
+  }
+  header h1 { font-size: 18px; margin: 0; letter-spacing: .5px; }
+  header h1 .accent { color: var(--accent); }
+  header .sub { color: var(--dim); font-size: 12px; }
+  header .badge { margin-left: auto; color: var(--green); font-size: 12px; }
+  main { display: grid; grid-template-columns: 340px 1fr; gap: 0; min-height: calc(100vh - 60px); }
+  .left { border-right: 1px solid var(--border); padding: 16px; display: flex; flex-direction: column; gap: 12px; }
+  .right { padding: 16px; display: flex; flex-direction: column; gap: 12px; overflow: auto; }
+  label { color: var(--dim); font-size: 11px; text-transform: uppercase; letter-spacing: 1px; }
+  textarea {
+    width: 100%; min-height: 180px; resize: vertical; background: var(--panel);
+    color: var(--fg); border: 1px solid var(--border); border-radius: 6px;
+    padding: 10px; font: 13px/1.5 "SF Mono", Menlo, monospace;
+  }
+  textarea:focus { outline: 1px solid var(--accent); }
+  button {
+    background: var(--accent); color: #0d1117; border: none; border-radius: 6px;
+    padding: 10px 14px; font: 600 13px -apple-system, sans-serif; cursor: pointer;
+  }
+  button:hover { filter: brightness(1.1); }
+  button:disabled { opacity: .5; cursor: default; }
+  .presets { display: flex; gap: 6px; flex-wrap: wrap; }
+  .presets button {
+    background: var(--panel2); color: var(--fg); border: 1px solid var(--border);
+    font-size: 11px; padding: 5px 9px; font-weight: 500;
+  }
+  .presets button:hover { border-color: var(--accent); color: var(--accent); }
+  .result {
+    background: var(--panel); border: 1px solid var(--border); border-radius: 6px;
+    padding: 10px 12px; font-size: 12px; white-space: pre-wrap; word-break: break-all;
+  }
+  .result .ok { color: var(--green); }
+  .result .err { color: var(--red); }
+  .result .dim { color: var(--dim); }
+  #graph { background: var(--panel); border: 1px solid var(--border); border-radius: 6px; flex: 1; min-height: 300px; }
+  #graph svg { width: 100%; height: 100%; display: block; }
+  .node rect { fill: var(--panel2); stroke: var(--border); stroke-width: 1.5; rx: 6; }
+  .node text { fill: var(--fg); font: 11px "SF Mono", Menlo, monospace; }
+  .node .op { fill: var(--accent); font-weight: 600; }
+  .node .name { fill: var(--dim); }
+  .edge { stroke: var(--dim); stroke-width: 1.2; fill: none; opacity: .7; }
+  .legend { color: var(--dim); font-size: 11px; display: flex; gap: 14px; flex-wrap: wrap; }
+  .legend span b { color: var(--fg); }
+  .swatch { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 4px; vertical-align: -1px; }
+  @media (max-width: 800px) { main { grid-template-columns: 1fr; } .left { border-right: none; border-bottom: 1px solid var(--border); } }
+</style>
+</head>
+<body>
+<header>
+  <h1><span class="accent">Tacit</span> · the array-language OS in your browser</h1>
+  <span class="sub">Uiua → UIR → run, compiled to WASM. No fork, no fd, no Metal.</span>
+  <span class="badge" id="status">loading wasm…</span>
+</header>
+<main>
+  <div class="left">
+    <label>Uiua program</label>
+    <textarea id="src" spellcheck="false">A ← ↯ [2048 2048] 1.0
+B ← ↯ [2048 2048] 2.0
+D ← ↯ [2048 2048] 3.0
+C ← × D + B A</textarea>
+    <div class="presets">
+      <button data-src='A ← ↯ [2048 2048] 1.0&#10;B ← ↯ [2048 2048] 2.0&#10;D ← ↯ [2048 2048] 3.0&#10;C ← × D + B A'>fusion</button>
+      <button data-src='A ← ↯ [64 64] 1.5&#10;B ← ↯ [64 64] 2.0&#10;C ← &amp;matmul A B'>matmul</button>
+      <button data-src='A ← ↯ [6 3] 5.0&#10;B ← ↯ [6 3] 2.0&#10;C ← + A B&#10;D ← ⊏ ⍖ ⊡ 1 C'>grade/select</button>
+    </div>
+    <button id="run">Compile &amp; run</button>
+    <label>Result</label>
+    <div class="result" id="result">—</div>
+    <div class="legend">
+      <span><span class="swatch" style="background:#58a6ff"></span><b>const/fill</b></span>
+      <span><span class="swatch" style="background:#3fb950"></span><b>compute</b></span>
+      <span><span class="swatch" style="background:#bc8cff"></span><b>effect</b></span>
+      <span><span class="swatch" style="background:#d29922"></span><b>source</b></span>
+    </div>
+  </div>
+  <div class="right">
+    <label>Live dataflow graph</label>
+    <div id="graph"><div class="result dim" style="border:none">compile a program to see its graph</div></div>
+  </div>
+</main>
+
+<script>
+const OP = {
+  0:'Const',1:'Add',2:'Sub',3:'Multiply',4:'Div',5:'Neg',6:'ReduceSum',7:'Reshape',
+  8:'Display',9:'Keyboard',10:'GraphNodes',11:'GraphEdges',12:'MachineDesc',13:'ReadySet',
+  14:'Reverse',15:'Count',16:'Format',17:'Fill',18:'Copy',19:'Send',20:'BytesMoved',
+  21:'BytesCopied',22:'KernelEntries',23:'AddMul',24:'Rows',25:'Caps',26:'Names',27:'Zero',
+  28:'FmtMachine',29:'Provenance',30:'Stats',31:'GradeUp',32:'GradeDown',33:'Select',
+  34:'Keep',35:'Pick',36:'Equal',37:'Hash',38:'Store',39:'Load',40:'Clock',41:'ReplayKeys',
+  42:'ReplayClock',43:'Trace',44:'Matmul',45:'Couple',46:'Request'
+};
+const DTYPE = {0:'i64',1:'f32',2:'u8'};
+const COMPUTE = new Set([1,2,3,4,5,6,7,14,15,17,23,31,32,33,34,35,36,44,45]);
+const EFFECT = new Set([8,9,18,19,20,21,22,27,28,29,30,37,38,39,40,41,42,43]);
+
+let wasm = null, memory = null;
+const enc = new TextEncoder();
+
+async function init() {
+  try {
+    const resp = await fetch('tacit_wasm.wasm');
+    const bytes = await resp.arrayBuffer();
+    const { instance } = await WebAssembly.instantiate(bytes, {});
+    wasm = instance.exports;
+    memory = wasm.memory;
+    document.getElementById('status').textContent = 'wasm ready';
+    document.getElementById('status').style.color = 'var(--green)';
+    document.getElementById('run').disabled = false;
+  } catch (e) {
+    document.getElementById('status').textContent = 'wasm failed: ' + e.message;
+    document.getElementById('status').style.color = 'var(--red)';
+  }
+}
+
+function call(fn, bytes) {
+  const base = 1024;
+  new Uint8Array(memory.buffer, base, bytes.length).set(bytes);
+  const lenPtr = 2048;
+  new Uint32Array(memory.buffer, lenPtr, 1)[0] = 0;
+  const ptr = wasm[fn](base, bytes.length, lenPtr);
+  const buf = memory.buffer; // re-acquire after possible growth
+  const len = new Uint32Array(buf, lenPtr, 1)[0];
+  if (ptr === 0 || len === 0) return null;
+  const out = new Uint8Array(buf.slice(ptr, ptr + len));
+  wasm.uiua_free(ptr, len);
+  return out;
+}
+
+function parseGraph(blob) {
+  const dv = new DataView(blob.buffer, blob.byteOffset);
+  const count = dv.getUint32(0, true);
+  const nodes = [];
+  let o = 4;
+  for (let i = 0; i < count; i++) {
+    const id = dv.getUint32(o, true); o += 4;
+    const op = blob[o]; o += 1;
+    const nameLen = dv.getUint32(o, true); o += 4;
+    const name = new TextDecoder().decode(blob.subarray(o, o + nameLen)); o += nameLen;
+    const in0 = dv.getUint32(o, true); o += 4;
+    const in1 = dv.getUint32(o, true); o += 4;
+    const in2 = dv.getUint32(o, true); o += 4;
+    nodes.push({ id, op, name, in0, in1, in2 });
+  }
+  return nodes;
+}
+
+function layout(nodes) {
+  const depth = new Array(nodes.length).fill(0);
+  for (let i = 0; i < nodes.length; i++) {
+    for (const inp of [nodes[i].in0, nodes[i].in1, nodes[i].in2]) {
+      if (inp !== 0xffffffff) depth[i] = Math.max(depth[i], depth[inp] + 1);
+    }
+  }
+  const cols = {};
+  nodes.forEach((n, i) => { (cols[depth[i]] = cols[depth[i]] || []).push(i); });
+  const pos = {};
+  for (const d in cols) {
+    cols[d].forEach((i, j) => { pos[i] = { x: +d, y: j }; });
+  }
+  return { depth, pos, maxDepth: Math.max(0, ...depth) };
+}
+
+function renderGraph(nodes) {
+  const { pos, maxDepth } = layout(nodes);
+  const W = 150, H = 64, PAD = 30;
+  const maxY = Math.max(1, ...Object.values(pos).map(p => p.y + 1));
+  const svgW = (maxDepth + 1) * W + PAD * 2;
+  const svgH = maxY * H + PAD * 2;
+  let s = `<svg viewBox="0 0 ${svgW} ${svgH}" xmlns="http://www.w3.org/2000/svg">`;
+  // edges
+  for (const n of nodes) {
+    for (const inp of [n.in0, n.in1, n.in2]) {
+      if (inp === 0xffffffff) continue;
+      const a = pos[inp], b = pos[n.id];
+      const x1 = a.x * W + W + PAD, y1 = a.y * H + H / 2 + PAD;
+      const x2 = b.x * W + PAD, y2 = b.y * H + H / 2 + PAD;
+      const mx = (x1 + x2) / 2;
+      s += `<path class="edge" d="M${x1},${y1} C${mx},${y1} ${mx},${y2} ${x2},${y2}"/>`;
+    }
+  }
+  // nodes
+  for (const n of nodes) {
+    const p = pos[n.id];
+    const x = p.x * W + PAD, y = p.y * H + PAD;
+    const color = n.op === 0 || n.op === 17 ? '#58a6ff' : EFFECT.has(n.op) ? '#bc8cff'
+      : (n.op >= 10 && n.op <= 13) || n.op === 25 || n.op === 26 || n.op === 46 ? '#d29922' : '#3fb950';
+    const label = (OP[n.op] || '?') + (n.name ? ' · ' + n.name : '');
+    s += `<g class="node" transform="translate(${x},${y})">`;
+    s += `<rect width="${W - 20}" height="${H - 20}" style="stroke:${color}"/>`;
+    s += `<text x="10" y="20" class="op">${label}</text>`;
+    s += `<text x="10" y="38" class="name">id ${n.id}</text>`;
+    s += `</g>`;
+  }
+  s += `</svg>`;
+  return s;
+}
+
+function interpretResult(val) {
+  const dtype = val[0], rank = val[1];
+  const shape = [];
+  for (let i = 0; i < 4; i++) {
+    const o = 2 + i * 4;
+    shape.push(val[o] | (val[o+1] << 8) | (val[o+2] << 16) | (val[o+3] << 24));
+  }
+  const data = new Uint8Array(val.subarray(18));
+  const elems = shape.slice(0, rank).reduce((a, b) => a * b, 1);
+  let vals;
+  if (dtype === 1) vals = Array.from(new Float32Array(data.buffer, 0, elems)).map(x => +x.toFixed(4));
+  else if (dtype === 0) vals = Array.from(new BigInt64Array(data.buffer, 0, elems)).map(String);
+  else vals = Array.from(data);
+  const shown = vals.slice(0, 12);
+  return `dtype=${DTYPE[dtype]||'?'} rank=${rank} shape=[${shape.slice(0,rank)}]\n[${shown.join(', ')}${elems > 12 ? ', …' : ''}]`;
+}
+
+async function run() {
+  const btn = document.getElementById('run');
+  btn.disabled = true;
+  const src = document.getElementById('src').value;
+  const result = document.getElementById('result');
+  const graph = document.getElementById('graph');
+  result.innerHTML = '<span class="dim">compiling…</span>';
+  try {
+    const srcBytes = enc.encode(src);
+    const uir = call('uiua_compile', srcBytes);
+    if (!uir) { result.innerHTML = '<span class="err">compile failed</span>'; return; }
+    const val = call('uiua_run', uir);
+    const g = call('uiua_graph', uir);
+    if (val) {
+      result.innerHTML = '<span class="ok">✓ ran</span>\n' + interpretResult(val).replace(/\n/g, '<br>');
+    } else {
+      result.innerHTML = '<span class="err">run failed</span>';
+    }
+    if (g) {
+      const nodes = parseGraph(g);
+      graph.innerHTML = renderGraph(nodes);
+    } else {
+      graph.innerHTML = '<div class="result dim" style="border:none">no graph</div>';
+    }
+  } catch (e) {
+    result.innerHTML = '<span class="err">' + e.message + '</span>';
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+document.getElementById('run').addEventListener('click', run);
+document.querySelectorAll('.presets button').forEach(b => {
+  b.addEventListener('click', () => {
+    document.getElementById('src').value = b.dataset.src;
+    run();
+  });
+});
+init();
+</script>
+</body>
+</html>

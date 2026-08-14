@@ -3,3 +3,9 @@
 /crates/tacit/embedded/*.uir
 Cargo.lock
 .opencode/
+# WASM browser build artifacts (rebuilt by ./build-wasm.sh; the gh-pages
+# branch carries the deployable tacit_wasm.wasm)
+wasm/target/
+wasm/tacit_wasm.wasm
+# native benchmark binary
+bench_native
