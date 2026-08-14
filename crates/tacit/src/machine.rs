@@ -25,7 +25,8 @@ pub static ENGINES: [EngineDesc; 8] = [
 
 pub const HOME: &str = "uma";
 
-pub fn print() {
+/// The machine description rendered as text.
+pub fn description_text() -> alloc::vec::Vec<u8> {
     let mut s = alloc::vec::Vec::new();
     crate::fmt::append_str(&mut s, "machine: Apple M4 Pro (reference)\n");
     crate::fmt::append_str(&mut s, "  home = uma\n");
@@ -37,5 +38,10 @@ pub fn print() {
         crate::fmt::append_str(&mut s, if e.online { "  [online]" } else { "  [offline]" });
         crate::fmt::append_str(&mut s, "\n");
     }
+    s
+}
+
+pub fn print() {
+    let s = description_text();
     crate::console_write_bytes(&s);
 }

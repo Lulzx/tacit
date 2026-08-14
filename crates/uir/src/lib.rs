@@ -62,6 +62,11 @@ pub const OP_ORDER: u8 = 25; // sink: consume ordering (policy output)
 pub const OP_ADD_MUL: u8 = 26; // fused Add-then-Multiply
 pub const OP_ROWS: u8 = 27; // rank-wise map marker (parallel leading axis)
 pub const OP_CAPS: u8 = 28; // source: capabilities table
+pub const OP_NAMES: u8 = 29; // source: node names table
+pub const OP_ZERO: u8 = 30; // reset traffic counters
+pub const OP_FMT_MACHINE: u8 = 31; // render the machine description as text
+pub const OP_PROVENANCE: u8 = 32; // provenance query for a node (const = node id)
+pub const OP_STATS: u8 = 33; // consume a value, report payload bytes + kernel entries
 
 pub const NONE: u32 = 0xffff_ffff;
 
@@ -116,6 +121,11 @@ pub fn op_name(op: u8) -> &'static str {
         OP_ADD_MUL => "AddMul",
         OP_ROWS => "Rows",
         OP_CAPS => "Caps",
+        OP_NAMES => "Names",
+        OP_ZERO => "Zero",
+        OP_FMT_MACHINE => "FmtMachine",
+        OP_PROVENANCE => "Provenance",
+        OP_STATS => "Stats",
         _ => "?",
     }
 }

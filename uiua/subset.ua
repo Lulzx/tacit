@@ -1,5 +1,5 @@
-# Subset coverage: reduce, reshape, rank-wise map, and the capabilities table.
+# Subset coverage: reduce (/+), reshape (↯), rank-wise map, capabilities.
 M ← [[1 2 3][4 5 6]]
-M &rows &reduce-sum &fmt "row-sums: " &display
-M &reshape [3 2] &fmt "reshaped: " &display
-&caps &count &fmt "capabilities: " &display
+&display &fmt "row-sums: " /+ &rows M
+&display &fmt "reshaped: " ↯ [3 2] M
+&display &fmt "capabilities: " ⧻ &caps

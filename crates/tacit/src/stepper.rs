@@ -137,6 +137,34 @@ impl<'a> Graph<'a> {
         t
     }
 
+    /// Node names as a rank-2 u8 table [n, maxlen], NUL-padded.
+    pub fn names_table(&self) -> alloc::vec::Vec<u8> {
+        let n = self.n();
+        let mut maxlen = 1usize;
+        for name in self.prog.names.iter() {
+            if name.len() > maxlen {
+                maxlen = name.len();
+            }
+        }
+        let mut t = alloc::vec![0u8; n * maxlen];
+        for (i, name) in self.prog.names.iter().enumerate() {
+            for (j, b) in name.iter().enumerate() {
+                t[i * maxlen + j] = *b;
+            }
+        }
+        t
+    }
+
+    pub fn names_stride(&self) -> usize {
+        let mut maxlen = 1usize;
+        for name in self.prog.names.iter() {
+            if name.len() > maxlen {
+                maxlen = name.len();
+            }
+        }
+        maxlen
+    }
+
     /// Free every owned region still held by this graph (explicit lifetime;
     /// there is no garbage collector).
     pub fn release_all(&mut self) {
@@ -190,7 +218,7 @@ pub fn run(g: &mut Graph, opts: &RunOpts) -> Result<(), &'static str> {
     Ok(())
 }
 
-fn order_ready(g: &Graph, opts: &RunOpts, ready: &[u32]) -> alloc::vec::Vec<u32> {
+fn order_ready(_g: &Graph, opts: &RunOpts, ready: &[u32]) -> alloc::vec::Vec<u32> {
     match opts.policy {
         None => ready.to_vec(),
         Some(prog) => {
@@ -481,7 +509,10 @@ fn step_node(g: &mut Graph, opts: &RunOpts, id: usize) -> Result<Option<Value>, 
             format_value(&a, c)
         }
         OP_COPY => {
-            let a = input(g, nd, 0)?;
+            // dyadic: (trigger, array).  The trigger orders the copy after a
+            // prior measurement; the array is copied (explicit payload copy).
+            let _trigger = input(g, nd, 0)?;
+            let a = input(g, nd, 1)?;
             let mut v = alloc_array(a.dtype, a.rank, &a.shape)?;
             unsafe {
                 core::ptr::copy_nonoverlapping(a.data as *const u8, v.data as *mut u8, v.byte_len());
@@ -513,7 +544,45 @@ fn step_node(g: &mut Graph, opts: &RunOpts, id: usize) -> Result<Option<Value>, 
             }
             Ok(Some(v))
         }
+        OP_NAMES => match opts.live {
+            Some(live) => {
+                let stride = live.names_stride();
+                let table = live.names_table();
+                let rows = table.len() / stride;
+                let mut v = alloc_array(DTYPE_U8, 2, &[rows, stride, 1, 1])?;
+                unsafe {
+                    core::ptr::copy_nonoverlapping(table.as_ptr(), v.data as *mut u8, table.len());
+                }
+                Ok(Some(v))
+            }
+            None => Ok(Some(scalar_value())),
+        },
+        OP_ZERO => {
+            crate::kernel::reset_counters();
+            let mut v = alloc_array(DTYPE_I64, 0, &[1, 1, 1, 1])?;
+            unsafe { *(v.data as *mut i64) = 0 };
+            Ok(Some(v))
+        }
+        OP_FMT_MACHINE => {
+            let text = crate::machine::description_text();
+            let mut v = alloc_array(DTYPE_U8, 1, &[text.len(), 1, 1, 1])?;
+            unsafe {
+                core::ptr::copy_nonoverlapping(text.as_ptr(), v.data as *mut u8, text.len());
+            }
+            Ok(Some(v))
+        }
+        OP_PROVENANCE => {
+            // const payload = node id (u32 LE)
+            let node = u32::from_le_bytes([c[0], c[1], c[2], c[3]]) as usize;
+            let text = provenance_text(opts.live, node);
+            let mut v = alloc_array(DTYPE_U8, 1, &[text.len(), 1, 1, 1])?;
+            unsafe {
+                core::ptr::copy_nonoverlapping(text.as_ptr(), v.data as *mut u8, text.len());
+            }
+            Ok(Some(v))
+        }
         OP_COUNTER_BYTES => {
+            let _a = input(g, nd, 0)?; // dependency: wait for the measured value
             let mut v = alloc_array(DTYPE_I64, 0, &[1, 1, 1, 1])?;
             unsafe {
                 *(v.data as *mut i64) = crate::kernel::counters().payload_moved as i64;
@@ -521,6 +590,7 @@ fn step_node(g: &mut Graph, opts: &RunOpts, id: usize) -> Result<Option<Value>, 
             Ok(Some(v))
         }
         OP_COUNTER_COPIED => {
+            let _a = input(g, nd, 0)?;
             let mut v = alloc_array(DTYPE_I64, 0, &[1, 1, 1, 1])?;
             unsafe {
                 *(v.data as *mut i64) = crate::kernel::counters().payload_copied as i64;
@@ -528,9 +598,24 @@ fn step_node(g: &mut Graph, opts: &RunOpts, id: usize) -> Result<Option<Value>, 
             Ok(Some(v))
         }
         OP_COUNTER_ENTRIES => {
+            let _a = input(g, nd, 0)?;
             let mut v = alloc_array(DTYPE_I64, 0, &[1, 1, 1, 1])?;
             unsafe {
                 *(v.data as *mut i64) = crate::kernel::counters().kernel_entries as i64;
+            }
+            Ok(Some(v))
+        }
+        OP_STATS => {
+            let _a = input(g, nd, 0)?; // dependency: wait for the measured value
+            let c = crate::kernel::counters();
+            let mut out = alloc::vec::Vec::new();
+            crate::fmt::append_str(&mut out, "payload bytes moved: ");
+            crate::fmt::append_u64(&mut out, c.payload_moved);
+            crate::fmt::append_str(&mut out, ", kernel entries: ");
+            crate::fmt::append_u64(&mut out, c.kernel_entries);
+            let mut v = alloc_array(DTYPE_U8, 1, &[out.len(), 1, 1, 1])?;
+            unsafe {
+                core::ptr::copy_nonoverlapping(out.as_ptr(), v.data as *mut u8, out.len());
             }
             Ok(Some(v))
         }
@@ -797,7 +882,41 @@ fn sort_table(a: &Value, col: usize, desc: bool) -> Result<Option<Value>, &'stat
 fn format_value(a: &Value, template: &[u8]) -> Result<Option<Value>, &'static str> {
     let mut out = alloc::vec::Vec::new();
     out.extend_from_slice(template);
-    if a.rank == 0 {
+    if a.rank >= 2 {
+        // table: render row by row
+        let rows = a.shape[0];
+        let cols = a.shape[1];
+        unsafe {
+            match a.dtype {
+                DTYPE_U8 => {
+                    let p = a.data as *const u8;
+                    for r in 0..rows {
+                        for cc in 0..cols {
+                            let b = *p.add(r * cols + cc);
+                            if b == 0 {
+                                break;
+                            }
+                            out.push(b);
+                        }
+                        out.push(b'\n');
+                    }
+                }
+                _ => {
+                    let p = a.data as *const i64;
+                    for r in 0..rows {
+                        out.extend_from_slice(b"  ");
+                        for cc in 0..cols {
+                            if cc > 0 {
+                                out.push(b' ');
+                            }
+                            crate::fmt::append_i64(&mut out, *p.add(r * cols + cc));
+                        }
+                        out.push(b'\n');
+                    }
+                }
+            }
+        }
+    } else if a.rank == 0 {
         unsafe {
             match a.dtype {
                 DTYPE_I64 => crate::fmt::append_i64(&mut out, *(a.data as *const i64)),
@@ -813,6 +932,36 @@ fn format_value(a: &Value, template: &[u8]) -> Result<Option<Value>, &'static st
         core::ptr::copy_nonoverlapping(out.as_ptr(), v.data as *mut u8, out.len());
     }
     Ok(Some(v))
+}
+
+/// Build the provenance text for a node in the live graph.
+fn provenance_text(live: Option<&Graph>, node: usize) -> alloc::vec::Vec<u8> {
+    let mut out = alloc::vec::Vec::new();
+    match live {
+        Some(g) => {
+            let nd = &g.prog.nodes[node];
+            crate::fmt::append_str(&mut out, "producer ");
+            crate::fmt::append_str(&mut out, g.prog.name(node));
+            crate::fmt::append_str(&mut out, " (node #");
+            crate::fmt::append_u64(&mut out, node as u64);
+            crate::fmt::append_str(&mut out, "), inputs ");
+            let mut first = true;
+            for inp in [nd.in0, nd.in1, nd.in2] {
+                if inp != NONE {
+                    if !first {
+                        crate::fmt::append_str(&mut out, " and ");
+                    }
+                    first = false;
+                    crate::fmt::append_str(&mut out, g.prog.name(inp as usize));
+                    crate::fmt::append_str(&mut out, " (node #");
+                    crate::fmt::append_u64(&mut out, inp as u64);
+                    crate::fmt::append_str(&mut out, ")");
+                }
+            }
+        }
+        None => crate::fmt::append_str(&mut out, "no live graph"),
+    }
+    out
 }
 
 /// Build the predicted text of a display write without touching the console.
@@ -832,15 +981,18 @@ pub fn predict_text(a: &Value) -> alloc::vec::Vec<u8> {
 }
 
 /// The display effect: validate the cap, simulate the predicted text, and only
-/// then commit.  A missing cap leaves the console unchanged.
+/// then commit.  It is a tee (like Uiua's `&p`): the input value is returned,
+/// so the stack thread continues.  A missing cap leaves the console unchanged.
 fn display_effect(opts: &RunOpts, a: &Value) -> Result<Option<Value>, &'static str> {
     if !crate::kernel::holds(opts.realm, CAP_DISPLAY) {
         return Err("no display capability");
     }
-    // simulate: build the predicted text without touching the console
     let mut predicted = predict_text(a);
     predicted.push(b'\n');
-    // commit
     crate::console_write_bytes(&predicted);
-    Ok(None)
+    // tee: return the input (sharing its region)
+    if let Some(region) = a.region {
+        crate::kernel::region_addref(region);
+    }
+    Ok(Some(a.clone()))
 }

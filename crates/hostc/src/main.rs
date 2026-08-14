@@ -1,11 +1,12 @@
-//! Tacit host compiler: lowers the documented Uiua subset to UIR.
+//! Tacit host compiler: lowers a first-milestone subset of **Uiua** to UIR.
 //!
-//! The subset: numeric scalars, rank-1/2 numeric arrays, character arrays,
-//! bindings, elementwise arithmetic, reduce, reshape, reverse, fill, display
-//! write, keyboard read, graph/machine query, table ops (count/filter/sort/
-//! order), and format.  Anything else is a compile error with a source
-//! location.  Files, threads, Metal, CUDA, and sockets are out of subset and
-//! are rejected before any image is produced.
+//! Uiua is a tacit array language: functions appear to the left of their
+//! arguments and code is read right-to-left (`+ 2 3` is 2+3, `× 2 + 3 5` is
+//! 2*(3+5)).  The subset covers numeric scalars/arrays, character vectors,
+//! bindings (`Name ← value`), elementwise arithmetic, reduce (`/+`), reshape
+//! (`↯`), reverse (`⇌`), length (`⧻`), plus the OS system functions (`&name`)
+//! for effects, graph/machine queries, counters, and placement.  Anything
+//! else is a compile error with a source location.
 
 use std::collections::HashMap;
 use uir::*;
@@ -23,7 +24,6 @@ struct Compiler {
     stack: Vec<SValue>,
     bindings: HashMap<String, SValue>,
     fuse: bool,
-    src: String,
     line: usize,
     next_name: Option<String>,
     parallel_axis: u8,
@@ -74,26 +74,24 @@ impl Compiler {
         };
         self.enc.node(&d, effective.as_bytes(), const_payload)
     }
-}
 
-impl Compiler {
     fn error(&self, msg: &str) -> String {
-        format!("{}:{}: {}", "line", self.line, msg)
-    }
-
-    fn push_value(&mut self, name: &str, v: SValue) {
-        self.stack.push(v);
-        let _ = name;
+        format!("line {}: {}", self.line, msg)
     }
 
     fn pop(&mut self) -> Result<SValue, String> {
         self.stack.pop().ok_or_else(|| self.error("stack underflow"))
     }
 
+    fn push_const(&mut self, dtype: u8, rank: u8, shape: &[u32; 4], payload: &[u8]) {
+        let n = self.emit(OP_CONST, dtype, rank, shape, true, CAP_NONE, NONE, NONE, NONE, "const", payload);
+        self.stack.push(SValue { node: n, dtype, rank, shape: *shape });
+    }
+
     fn binop(&mut self, op: u8, name: &str) -> Result<(), String> {
-        let b = self.pop()?;
+        // Right-to-left: the top of stack is the left argument.
         let a = self.pop()?;
-        // scalar broadcast or same shape
+        let b = self.pop()?;
         let (dtype, rank, shape) = if a.rank == 0 {
             (b.dtype, b.rank, b.shape)
         } else if b.rank == 0 {
@@ -105,50 +103,58 @@ impl Compiler {
             (a.dtype, a.rank, a.shape)
         };
         self.parallel_axis = if rank > 0 { 1 } else { 0 };
-        let n = self.emit( op, dtype, rank, &shape, true, CAP_NONE, a.node, b.node, NONE, name, &[]);
+        let n = self.emit(op, dtype, rank, &shape, true, CAP_NONE, a.node, b.node, NONE, name, &[]);
         self.stack.push(SValue { node: n, dtype, rank, shape });
         Ok(())
     }
 
     fn unop(&mut self, op: u8, name: &str, pure: bool, cap: u8) -> Result<(), String> {
         let a = self.pop()?;
-        let n = self.emit( op, a.dtype, a.rank, &a.shape, pure, cap, a.node, NONE, NONE, name, &[]);
+        let n = self.emit(op, a.dtype, a.rank, &a.shape, pure, cap, a.node, NONE, NONE, name, &[]);
         self.stack.push(SValue { node: n, dtype: a.dtype, rank: a.rank, shape: a.shape });
         Ok(())
     }
 
     fn source(&mut self, op: u8, name: &str) {
-        let n = self.emit( op, DTYPE_I64, 2, &[0, 7, 1, 1], true, CAP_NONE, NONE, NONE, NONE, name, &[]);
+        let n = self.emit(op, DTYPE_I64, 2, &[0, 7, 1, 1], true, CAP_NONE, NONE, NONE, NONE, name, &[]);
         self.stack.push(SValue { node: n, dtype: DTYPE_I64, rank: 2, shape: [0, 7, 1, 1] });
     }
 }
+
+// ---------------------------------------------------------------------------
+// Tokens
+// ---------------------------------------------------------------------------
 
 #[derive(Debug, Clone, PartialEq)]
 enum Tok {
     Int(i64),
     Float(f64),
     Str(Vec<u8>),
+    List { dtype: u8, rank: u8, shape: [u32; 4], payload: Vec<u8> },
     Ident(String),
     Sys(String),
-    Plus,
-    Minus,
-    Star,
-    Slash,
+    Add,
+    Sub,
+    Mul,
+    Div,
+    Sum,
+    Reverse,
+    Length,
+    Reshape { rank: u8, dims: [u32; 4] },
+    Fill { dtype: u8, rank: u8, shape: [u32; 4], value: f64 },
+    Fmt { template: Vec<u8> },
+    Provenance(u32),
     Arrow,
-    LBracket,
-    RBracket,
     Newline,
 }
 
 fn tokenize(src: &str) -> Result<Vec<(usize, Tok)>, String> {
-    let mut toks = Vec::new();
-    let bytes = src.as_bytes();
     let chars: Vec<(usize, char)> = src.char_indices().collect();
+    let mut toks = Vec::new();
     let mut ci = 0usize;
     let mut line = 1;
     while ci < chars.len() {
         let (bi, c) = chars[ci];
-        let i = bi;
         if c == '\n' {
             toks.push((line, Tok::Newline));
             line += 1;
@@ -167,37 +173,16 @@ fn tokenize(src: &str) -> Result<Vec<(usize, Tok)>, String> {
             continue;
         }
         if c == '[' {
-            toks.push((line, Tok::LBracket));
-            ci += 1;
+            let (list, next) = parse_list(src, &chars, ci)?;
+            ci = next;
+            toks.push((line, list));
             continue;
         }
         if c == ']' {
-            toks.push((line, Tok::RBracket));
-            ci += 1;
-            continue;
+            return Err(format!("line {}: unexpected ']'", line));
         }
         if c == '←' {
             toks.push((line, Tok::Arrow));
-            ci += 1;
-            continue;
-        }
-        if c == '+' {
-            toks.push((line, Tok::Plus));
-            ci += 1;
-            continue;
-        }
-        if c == '-' {
-            toks.push((line, Tok::Minus));
-            ci += 1;
-            continue;
-        }
-        if c == '×' || c == '*' {
-            toks.push((line, Tok::Star));
-            ci += 1;
-            continue;
-        }
-        if c == '÷' || c == '/' {
-            toks.push((line, Tok::Slash));
             ci += 1;
             continue;
         }
@@ -219,47 +204,102 @@ fn tokenize(src: &str) -> Result<Vec<(usize, Tok)>, String> {
         if c == '&' {
             let start_line = line;
             ci += 1;
-            let s0 = if ci < chars.len() { chars[ci].0 } else { i + 1 };
+            let s0 = chars[ci].0;
             while ci < chars.len() && (chars[ci].1.is_ascii_alphanumeric() || chars[ci].1 == '-') {
                 ci += 1;
             }
-            let s1 = if ci < chars.len() { chars[ci].0 } else { bytes.len() };
-            let name = src[s0..s1].to_string();
+            let name = src[s0..chars[ci].0].to_string();
             toks.push((start_line, Tok::Sys(name)));
+            continue;
+        }
+        if c == '¯' {
+            let start_line = line;
+            ci += 1;
+            let (t, next) = read_number(src, &chars, ci)?;
+            ci = next;
+            match t {
+                Tok::Int(v) => toks.push((start_line, Tok::Int(-v))),
+                Tok::Float(v) => toks.push((start_line, Tok::Float(-v))),
+                _ => return Err(format!("line {}: '¯' must precede a number", line)),
+            }
             continue;
         }
         if c.is_ascii_digit() || (c == '.' && ci + 1 < chars.len() && chars[ci + 1].1.is_ascii_digit()) {
             let start_line = line;
-            let s0 = i;
-            let mut is_float = false;
-            while ci < chars.len() && (chars[ci].1.is_ascii_digit() || chars[ci].1 == '.') {
-                if chars[ci].1 == '.' {
-                    is_float = true;
-                }
-                ci += 1;
-            }
-            let s1 = if ci < chars.len() { chars[ci].0 } else { bytes.len() };
-            let text = &src[s0..s1];
-            if is_float {
-                toks.push((start_line, Tok::Float(text.parse().map_err(|_| format!("line {}: bad float", start_line))?)));
+            let (t, next) = read_number(src, &chars, ci)?;
+            ci = next;
+            toks.push((start_line, t));
+            continue;
+        }
+        if c == '+' {
+            toks.push((line, Tok::Add));
+            ci += 1;
+            continue;
+        }
+        if c == '-' {
+            toks.push((line, Tok::Sub));
+            ci += 1;
+            continue;
+        }
+        if c == '×' || c == '*' {
+            toks.push((line, Tok::Mul));
+            ci += 1;
+            continue;
+        }
+        if c == '÷' || c == '%' {
+            toks.push((line, Tok::Div));
+            ci += 1;
+            continue;
+        }
+        if c == '/' {
+            // `/` is Uiua's reduce modifier; the subset supports `/+` (sum).
+            if ci + 1 < chars.len() && chars[ci + 1].1 == '+' {
+                toks.push((line, Tok::Sum));
+                ci += 2;
             } else {
-                toks.push((start_line, Tok::Int(text.parse().map_err(|_| format!("line {}: bad int", start_line))?)));
+                return Err(format!("line {}: reduce '/' with a non-'+' function is out of the first-milestone subset", line));
             }
+            continue;
+        }
+        if c == '⇌' {
+            toks.push((line, Tok::Reverse));
+            ci += 1;
+            continue;
+        }
+        if c == '⧻' {
+            toks.push((line, Tok::Length));
+            ci += 1;
+            continue;
+        }
+        if c == '↯' {
+            toks.push((line, Tok::Reshape { rank: 0, dims: [1, 1, 1, 1] }));
+            ci += 1;
             continue;
         }
         if c.is_ascii_alphabetic() || c == '_' {
             let start_line = line;
-            let s0 = i;
-            while ci < chars.len() && (chars[ci].1.is_ascii_alphanumeric() || chars[ci].1 == '_' || chars[ci].1 == '-') {
+            let s0 = bi;
+            while ci < chars.len() && (chars[ci].1.is_ascii_alphanumeric() || chars[ci].1 == '_') {
                 ci += 1;
             }
-            let s1 = if ci < chars.len() { chars[ci].0 } else { bytes.len() };
-            let name = src[s0..s1].to_string();
-            // reject out-of-subset nouns
-            if matches!(name.as_str(), "open" | "read" | "write" | "close" | "seek" | "fork" | "exec" | "thread" | "spawn" | "pthread" | "socket" | "listen" | "accept" | "metal" | "cuda" | "coreml" | "accelerate" | "file" | "ioctl") {
-                return Err(format!("line {}: '{}' is out of the first-milestone subset", start_line, name));
-            }
-            toks.push((start_line, Tok::Ident(name)));
+            let name = &src[s0..chars[ci].0];
+            let tok = match name {
+                "add" => Tok::Add,
+                "sub" | "subtract" => Tok::Sub,
+                "mul" | "multiply" => Tok::Mul,
+                "div" | "divide" => Tok::Div,
+                "sum" => Tok::Sum,
+                "reverse" => Tok::Reverse,
+                "length" => Tok::Length,
+                "reshape" => Tok::Reshape { rank: 0, dims: [1, 1, 1, 1] },
+                "open" | "read" | "write" | "close" | "seek" | "fork" | "exec" | "thread"
+                | "spawn" | "pthread" | "socket" | "listen" | "accept" | "metal" | "cuda"
+                | "coreml" | "accelerate" | "file" | "ioctl" => {
+                    return Err(format!("line {}: '{}' is out of the first-milestone subset", start_line, name));
+                }
+                _ => Tok::Ident(name.to_string()),
+            };
+            toks.push((start_line, tok));
             continue;
         }
         return Err(format!("line {}: unexpected character '{}'", line, c));
@@ -267,425 +307,94 @@ fn tokenize(src: &str) -> Result<Vec<(usize, Tok)>, String> {
     Ok(toks)
 }
 
-fn compile(src: &str, fuse: bool) -> Result<Vec<u8>, String> {
-    let toks = tokenize(src)?;
-    let mut c = Compiler {
-        enc: Encoder::new(),
-        stack: Vec::new(),
-        bindings: HashMap::new(),
-        fuse,
-        src: src.to_string(),
-        line: 1,
-        next_name: None,
-        parallel_axis: 0,
-    };
-
-    // Split into statements on newlines; within a statement, an Arrow marks a
-    // binding (`name ← expr`).  The last non-empty statement is the program
-    // body; earlier statements are bindings.
-    let mut stmts: Vec<Vec<(usize, Tok)>> = Vec::new();
-    let mut cur: Vec<(usize, Tok)> = Vec::new();
-    for (ln, t) in &toks {
-        if *t == Tok::Newline {
-            if !cur.is_empty() {
-                stmts.push(core::mem::take(&mut cur));
-            }
-        } else {
-            cur.push((*ln, t.clone()));
+fn read_number(src: &str, chars: &[(usize, char)], ci: usize) -> Result<(Tok, usize), String> {
+    let s0 = chars[ci].0;
+    let mut i = ci;
+    let mut is_float = false;
+    while i < chars.len() && (chars[i].1.is_ascii_digit() || chars[i].1 == '.') {
+        if chars[i].1 == '.' {
+            is_float = true;
         }
+        i += 1;
     }
-    if !cur.is_empty() {
-        stmts.push(cur);
+    let text = &src[s0..chars[i].0];
+    if is_float {
+        Ok((Tok::Float(text.parse().map_err(|_| format!("bad float '{}'", text))?), i))
+    } else {
+        Ok((Tok::Int(text.parse().map_err(|_| format!("bad int '{}'", text))?), i))
     }
+}
 
-    let n_stmts = stmts.len();
-    for (si, stmt) in stmts.iter().enumerate() {
-        if stmt.is_empty() {
+fn parse_list(src: &str, chars: &[(usize, char)], open: usize) -> Result<(Tok, usize), String> {
+    // chars[open] == '['
+    let mut i = open + 1;
+    let mut elems: Vec<(u8, f64, i64)> = Vec::new();
+    let mut dtype = DTYPE_I64;
+    let mut nested = false;
+    let mut rows = 0usize;
+    let mut depth = 1usize;
+    loop {
+        if i >= chars.len() {
+            return Err("unterminated list".to_string());
+        }
+        let c = chars[i].1;
+        if c == ']' {
+            depth -= 1;
+            i += 1;
+            if depth == 0 {
+                break;
+            }
             continue;
         }
-        let is_binding = stmt.len() >= 2 && stmt[1].1 == Tok::Arrow;
-        if is_binding {
-            // expect: name ← expr ...
-            if stmt.len() < 2 || stmt[1].1 != Tok::Arrow {
-                return Err(format!("line {}: expected binding `name ← expr`", stmt[0].0));
-            }
-            let name = match &stmt[0].1 {
-                Tok::Ident(n) => n.clone(),
-                _ => return Err(format!("line {}: expected binding name", stmt[0].0)),
-            };
-            c.line = stmt[0].0;
-            c.next_name = Some(name.clone());
-            c.eval_words(&stmt[2..])?;
-            let v = c.stack.pop().ok_or_else(|| c.error("binding has no value"))?;
-            c.bindings.insert(name, v);
-        } else {
-            c.line = stmt[0].0;
-            c.eval_words(stmt)?;
+        if c == '[' {
+            nested = true;
+            rows += 1;
+            depth += 1;
+            i += 1;
+            continue;
         }
-    }
-
-    let mut bytes = c.enc.finish();
-    if fuse {
-        bytes = fuse_pass(&bytes);
-    }
-    Ok(bytes)
-}
-
-/// Fusion pass: replace a single-consumer pure Add→Multiply chain with one
-/// AddMul kernel so the intermediate T = A+B is never materialized.  Does not
-/// fuse across effectful nodes or fan-out (single-consumer rule).
-fn fuse_pass(buf: &[u8]) -> Vec<u8> {
-    let prog = match uir::decode(buf) {
-        Ok(p) => p,
-        Err(_) => return buf.to_vec(),
-    };
-    let n = prog.nodes.len();
-    let mut dead = vec![false; n];
-    let mut consumers = vec![0u32; n];
-    for nd in &prog.nodes {
-        for inp in [nd.in0, nd.in1, nd.in2] {
-            if inp != NONE {
-                consumers[inp as usize] += 1;
-            }
+        if c.is_whitespace() || c == ',' {
+            i += 1;
+            continue;
         }
-    }
-    let mut nodes = prog.nodes.clone();
-    for i in 0..n {
-        let nd = nodes[i];
-        if nd.op == OP_MUL && nd.in0 != NONE && nd.pure {
-            let add_idx = nd.in0 as usize;
-            let add = nodes[add_idx];
-            if add.op == OP_ADD
-                && add.pure
-                && add.in2 == NONE
-                && consumers[add_idx] == 1
-            {
-                nodes[i].op = OP_ADD_MUL;
-                nodes[i].in0 = add.in0;
-                nodes[i].in1 = add.in1;
-                nodes[i].in2 = nd.in1;
-                dead[add_idx] = true;
-            }
-        }
-    }
-
-    // Re-encode with id remapping.
-    let mut enc = Encoder::new();
-    let mut remap = vec![NONE; n];
-    for (i, nd) in nodes.iter().enumerate() {
-        if !dead[i] {
-            remap[i] = enc.count;
-            let map = |x: u32| if x == NONE { NONE } else { remap[x as usize] };
-            let mut d = *nd;
-            d.in0 = map(d.in0);
-            d.in1 = map(d.in1);
-            d.in2 = map(d.in2);
-            d.name_len = if d.op == OP_ADD_MUL { 6 } else { d.name_len };
-            let name: &[u8] = if d.op == OP_ADD_MUL {
-                b"AddMul"
-            } else {
-                &prog.names[i]
-            };
-            enc.node(&d, name, &prog.consts[i]);
-        }
-    }
-    enc.finish()
-}
-
-impl Compiler {
-    fn eval_words(&mut self, words: &[(usize, Tok)]) -> Result<(), String> {
-        let mut j = 0;
-        while j < words.len() {
-            let (ln, t) = &words[j];
-            self.line = *ln;
+        if c == '¯' {
+            i += 1;
+            let (t, n) = read_number(src, chars, i)?;
+            i = n;
             match t {
-                Tok::Int(v) => {
-                    let payload = const_i64(&[*v]);
-                    let n = self.emit( OP_CONST, DTYPE_I64, 0, &[1, 1, 1, 1], true, CAP_NONE, NONE, NONE, NONE, "const", &payload);
-                    self.stack.push(SValue { node: n, dtype: DTYPE_I64, rank: 0, shape: [1, 1, 1, 1] });
-                }
-                Tok::Float(v) => {
-                    let payload = const_f32(&[*v as f32]);
-                    let n = self.emit( OP_CONST, DTYPE_F32, 0, &[1, 1, 1, 1], true, CAP_NONE, NONE, NONE, NONE, "const", &payload);
-                    self.stack.push(SValue { node: n, dtype: DTYPE_F32, rank: 0, shape: [1, 1, 1, 1] });
-                }
-                Tok::Str(s) => {
-                    let payload = const_u8(s);
-                    let n = self.emit( OP_CONST, DTYPE_U8, 1, &[s.len() as u32, 1, 1, 1], true, CAP_NONE, NONE, NONE, NONE, "const", &payload);
-                    self.stack.push(SValue { node: n, dtype: DTYPE_U8, rank: 1, shape: [s.len() as u32, 1, 1, 1] });
-                }
-                Tok::Ident(name) => {
-                    let v = self.bindings.get(name).cloned().ok_or_else(|| self.error(&format!("unknown name '{}'", name)))?;
-                    self.stack.push(v);
-                }
-                Tok::LBracket => {
-                    // parse a numeric list: [ n n n ... ] (or matrix [[..][..]])
-                    let (n, shape, rank, dtype) = self.parse_list(words, &mut j)?;
-                    self.stack.push(SValue { node: n, dtype, rank, shape });
-                }
-                Tok::Plus => self.binop(OP_ADD, "Add")?,
-                Tok::Minus => self.binop(OP_SUB, "Sub")?,
-                Tok::Star => self.binop(OP_MUL, "Multiply")?,
-                Tok::Slash => self.binop(OP_DIV, "Div")?,
-                Tok::Sys(name) => self.eval_sys(name, words, &mut j)?,
-                Tok::Arrow | Tok::RBracket | Tok::Newline => {}
-            }
-            j += 1;
-        }
-        Ok(())
-    }
-
-    fn parse_list(&mut self, words: &[(usize, Tok)], j: &mut usize) -> Result<(u32, [u32; 4], u8, u8), String> {
-        // words[*j] == LBracket.  Collect ints/floats until RBracket.
-        let start = *j;
-        let mut k = *j + 1;
-        let mut elems: Vec<(u8, f64, i64)> = Vec::new();
-        let mut dtype = DTYPE_I64;
-        let mut matrix = false;
-        let mut inner_dims: Option<usize> = None;
-        let mut row_count = 0usize;
-        let mut nested = 0usize;
-        while k < words.len() {
-            match &words[k].1 {
-                Tok::LBracket => {
-                    nested += 1;
-                    matrix = true;
-                }
-                Tok::RBracket => {
-                    if nested == 0 {
-                        break;
-                    }
-                    nested -= 1;
-                    row_count += 1;
-                }
-                Tok::Int(v) => elems.push((DTYPE_I64, *v as f64, *v)),
                 Tok::Float(v) => {
                     dtype = DTYPE_F32;
-                    elems.push((DTYPE_F32, *v, *v as i64));
+                    elems.push((DTYPE_F32, -v, -(v as i64)));
                 }
-                _ => {
-                    return Err(self.error("unexpected token in list"));
-                }
+                Tok::Int(v) => elems.push((DTYPE_I64, -(v as f64), -v)),
+                _ => unreachable!(),
             }
-            k += 1;
+            continue;
         }
-        if k >= words.len() {
-            return Err(self.error("unterminated list"));
+        if c.is_ascii_digit() || (c == '.' && i + 1 < chars.len() && chars[i + 1].1.is_ascii_digit()) {
+            let (t, n) = read_number(src, chars, i)?;
+            i = n;
+            match t {
+                Tok::Float(v) => {
+                    dtype = DTYPE_F32;
+                    elems.push((DTYPE_F32, v, v as i64));
+                }
+                Tok::Int(v) => elems.push((DTYPE_I64, v as f64, v)),
+                _ => unreachable!(),
+            }
+            continue;
         }
-        *j = k; // advance to RBracket
-
-        let _ = start;
-        if matrix {
-            // rank-2: row_count rows.  Infer cols.
-            let total = elems.len();
-            let cols = if row_count > 0 { total / row_count } else { 0 };
-            let shape = [row_count as u32, cols as u32, 1, 1];
-            let payload = list_payload(dtype, &elems);
-            let n = self.emit( OP_CONST, dtype, 2, &shape, true, CAP_NONE, NONE, NONE, NONE, "const", &payload);
-            Ok((n, shape, 2, dtype))
-        } else {
-            let shape = [elems.len() as u32, 1, 1, 1];
-            let payload = list_payload(dtype, &elems);
-            let n = self.emit( OP_CONST, dtype, 1, &shape, true, CAP_NONE, NONE, NONE, NONE, "const", &payload);
-            Ok((n, shape, 1, dtype))
-        }
+        return Err(format!("unexpected '{}' in list", c));
     }
-
-    fn eval_sys(&mut self, name: &str, words: &[(usize, Tok)], j: &mut usize) -> Result<(), String> {
-        match name {
-            "display" => self.unop(OP_DISPLAY, "Display", false, CAP_DISPLAY),
-            "keys" => {
-                // keyboard source (effectful)
-                let n = self.emit( OP_KEYBOARD, DTYPE_U8, 1, &[0, 1, 1, 1], false, CAP_KEYBOARD, NONE, NONE, NONE, "Keyboard", &[]);
-                self.stack.push(SValue { node: n, dtype: DTYPE_U8, rank: 1, shape: [0, 1, 1, 1] });
-                Ok(())
-            }
-            "graph-nodes" => {
-                self.source(OP_GRAPH_NODES, "GraphNodes");
-                Ok(())
-            }
-            "graph-edges" => {
-                self.source(OP_GRAPH_EDGES, "GraphEdges");
-                Ok(())
-            }
-            "machine" => {
-                self.source(OP_MACHINE_DESC, "MachineDesc");
-                Ok(())
-            }
-            "ready" => {
-                self.source(OP_READY_SET, "ReadySet");
-                Ok(())
-            }
-            "count" => self.unop(OP_COUNT, "Count", true, CAP_NONE),
-            "filter-effectful" => {
-                // Filter rows where pure == 0 (col 2 in node table)
-                let a = self.pop()?;
-                let payload = filter_payload(2, 0);
-                let n = self.emit( OP_FILTER, DTYPE_I64, 2, &a.shape, true, CAP_NONE, a.node, NONE, NONE, "Filter", &payload);
-                self.stack.push(SValue { node: n, dtype: DTYPE_I64, rank: 2, shape: a.shape });
-                Ok(())
-            }
-            "filter-pure" => {
-                // Filter rows where pure == 1 (col 2 in node table)
-                let a = self.pop()?;
-                let payload = filter_payload(2, 1);
-                let n = self.emit( OP_FILTER, DTYPE_I64, 2, &a.shape, true, CAP_NONE, a.node, NONE, NONE, "Filter", &payload);
-                self.stack.push(SValue { node: n, dtype: DTYPE_I64, rank: 2, shape: a.shape });
-                Ok(())
-            }
-            "filter-ready" => {
-                let a = self.pop()?;
-                let payload = filter_payload(6, 1);
-                let n = self.emit( OP_FILTER, DTYPE_I64, 2, &a.shape, true, CAP_NONE, a.node, NONE, NONE, "Filter", &payload);
-                self.stack.push(SValue { node: n, dtype: DTYPE_I64, rank: 2, shape: a.shape });
-                Ok(())
-            }
-            "sort-asc" => {
-                let a = self.pop()?;
-                let payload = [0u8, 0u8]; // col 0, ascending
-                let n = self.emit( OP_SORT_BY, DTYPE_I64, 2, &a.shape, true, CAP_NONE, a.node, NONE, NONE, "SortBy", &payload);
-                self.stack.push(SValue { node: n, dtype: DTYPE_I64, rank: 2, shape: a.shape });
-                Ok(())
-            }
-            "sort-desc" => {
-                let a = self.pop()?;
-                let payload = [0u8, 1u8]; // col 0, descending
-                let n = self.emit( OP_SORT_BY, DTYPE_I64, 2, &a.shape, true, CAP_NONE, a.node, NONE, NONE, "SortBy", &payload);
-                self.stack.push(SValue { node: n, dtype: DTYPE_I64, rank: 2, shape: a.shape });
-                Ok(())
-            }
-            "reverse" => self.unop(OP_REVERSE, "Reverse", true, CAP_NONE),
-            "order" => self.unop(OP_ORDER, "Order", true, CAP_NONE),
-            "reduce-sum" => {
-                let a = self.pop()?;
-                let (rank, shape) = if a.rank == 0 {
-                    (0, [1u32, 1, 1, 1])
-                } else if a.rank == 1 {
-                    (0, [1u32, 1, 1, 1])
-                } else {
-                    // reduce over the last axis: [r, c] -> [r]
-                    (1, [a.shape[0], 1, 1, 1])
-                };
-                let n = self.emit(OP_REDUCE_SUM, a.dtype, rank, &shape, true, CAP_NONE, a.node, NONE, NONE, "ReduceSum", &[]);
-                self.stack.push(SValue { node: n, dtype: a.dtype, rank, shape });
-                Ok(())
-            }
-            "reshape" => {
-                // &reshape [dims] : pop value, change shape (metadata)
-                *j += 1;
-                let (_, shape_tok) = words.get(*j).ok_or_else(|| self.error("&reshape needs a shape list"))?;
-                let (rank, shape) = match shape_tok {
-                    Tok::LBracket => {
-                        let mut k = *j + 1;
-                        let mut dims = Vec::new();
-                        while k < words.len() {
-                            match &words[k].1 {
-                                Tok::RBracket => break,
-                                Tok::Int(v) => dims.push(*v as u32),
-                                _ => return Err(self.error("shape list must be ints")),
-                            }
-                            k += 1;
-                        }
-                        *j = k;
-                        let mut s = [1u32; 4];
-                        for (i, d) in dims.iter().enumerate() {
-                            s[i] = *d;
-                        }
-                        (dims.len() as u8, s)
-                    }
-                    _ => return Err(self.error("&reshape needs a shape list")),
-                };
-                let a = self.pop()?;
-                if shape_elems(rank, &shape) != shape_elems(a.rank, &a.shape) {
-                    return Err(self.error("reshape must preserve element count"));
-                }
-                let n = self.emit(OP_RESHAPE, a.dtype, rank, &shape, true, CAP_NONE, a.node, NONE, NONE, "Reshape", &[]);
-                self.stack.push(SValue { node: n, dtype: a.dtype, rank, shape });
-                Ok(())
-            }
-            "rows" => {
-                // rank-wise map: the leading axis is independent.
-                let a = self.pop()?;
-                self.parallel_axis = 1;
-                let n = self.emit(OP_ROWS, a.dtype, a.rank, &a.shape, true, CAP_NONE, a.node, NONE, NONE, "Rows", &[]);
-                self.stack.push(SValue { node: n, dtype: a.dtype, rank: a.rank, shape: a.shape });
-                Ok(())
-            }
-            "caps" => {
-                self.source(OP_CAPS, "Caps");
-                Ok(())
-            }
-            "bytes" => {
-                let n = self.emit( OP_COUNTER_BYTES, DTYPE_I64, 0, &[1, 1, 1, 1], true, CAP_NONE, NONE, NONE, NONE, "BytesMoved", &[]);
-                self.stack.push(SValue { node: n, dtype: DTYPE_I64, rank: 0, shape: [1, 1, 1, 1] });
-                Ok(())
-            }
-            "copied" => {
-                let n = self.emit( OP_COUNTER_COPIED, DTYPE_I64, 0, &[1, 1, 1, 1], true, CAP_NONE, NONE, NONE, NONE, "BytesCopied", &[]);
-                self.stack.push(SValue { node: n, dtype: DTYPE_I64, rank: 0, shape: [1, 1, 1, 1] });
-                Ok(())
-            }
-            "entries" => {
-                let n = self.emit( OP_COUNTER_ENTRIES, DTYPE_I64, 0, &[1, 1, 1, 1], true, CAP_NONE, NONE, NONE, NONE, "KernelEntries", &[]);
-                self.stack.push(SValue { node: n, dtype: DTYPE_I64, rank: 0, shape: [1, 1, 1, 1] });
-                Ok(())
-            }
-            "fmt" => {
-                // &fmt "template" : pop value, push Format(value, template)
-                // template is the next token (a string)
-                *j += 1;
-                let (_, tpl) = words.get(*j).ok_or_else(|| self.error("&fmt needs a template string"))?;
-                let tpl = match tpl {
-                    Tok::Str(s) => s.clone(),
-                    _ => return Err(self.error("&fmt template must be a string")),
-                };
-                let a = self.pop()?;
-                let n = self.emit( OP_FORMAT, DTYPE_U8, 1, &[0, 1, 1, 1], true, CAP_NONE, a.node, NONE, NONE, "Format", &tpl);
-                self.stack.push(SValue { node: n, dtype: DTYPE_U8, rank: 1, shape: [0, 1, 1, 1] });
-                Ok(())
-            }
-            "fill" => {
-                // &fill [shape] value
-                *j += 1;
-                let (_, shape_tok) = words.get(*j).ok_or_else(|| self.error("&fill needs a shape list"))?;
-                let shape = match shape_tok {
-                    Tok::LBracket => {
-                        // parse shape list of ints
-                        let mut k = *j + 1;
-                        let mut dims = Vec::new();
-                        while k < words.len() {
-                            match &words[k].1 {
-                                Tok::RBracket => break,
-                                Tok::Int(v) => dims.push(*v as u32),
-                                _ => return Err(self.error("shape list must be ints")),
-                            }
-                            k += 1;
-                        }
-                        *j = k;
-                        let mut s = [1u32; 4];
-                        for (i, d) in dims.iter().enumerate() {
-                            s[i] = *d;
-                        }
-                        (dims.len() as u8, s)
-                    }
-                    _ => return Err(self.error("&fill needs a shape list")),
-                };
-                let (rank, shape) = shape;
-                *j += 1;
-                let (_, val_tok) = words.get(*j).ok_or_else(|| self.error("&fill needs a value"))?;
-                let (dtype, fill) = match val_tok {
-                    Tok::Float(v) => (DTYPE_F32, *v),
-                    Tok::Int(v) => (DTYPE_I64, *v as f64),
-                    _ => return Err(self.error("&fill value must be numeric")),
-                };
-                let payload = const_fill(dtype, rank, &shape, fill);
-                self.parallel_axis = if rank > 0 { 1 } else { 0 };
-                let n = self.emit( OP_FILL, dtype, rank, &shape, true, CAP_NONE, NONE, NONE, NONE, "Fill", &payload);
-                self.stack.push(SValue { node: n, dtype, rank, shape });
-                Ok(())
-            }
-            other => Err(self.error(&format!("unknown system word '&{}'", other))),
-        }
+    if nested {
+        let cols = if rows > 0 { elems.len() / rows } else { 0 };
+        let shape = [rows as u32, cols as u32, 1, 1];
+        let payload = list_payload(dtype, &elems);
+        Ok((Tok::List { dtype, rank: 2, shape, payload }, i))
+    } else {
+        let shape = [elems.len() as u32, 1, 1, 1];
+        let payload = list_payload(dtype, &elems);
+        Ok((Tok::List { dtype, rank: 1, shape, payload }, i))
     }
 }
 
@@ -705,11 +414,411 @@ fn list_payload(dtype: u8, elems: &[(u8, f64, i64)]) -> Vec<u8> {
     }
 }
 
+/// Extract the dims from a shape list's i64 payload.
+fn dims_from_payload(payload: &[u8]) -> Vec<u32> {
+    let mut dims = Vec::new();
+    for i in (0..payload.len()).step_by(8) {
+        if i + 8 <= payload.len() {
+            let v = i64::from_le_bytes([payload[i], payload[i + 1], payload[i + 2], payload[i + 3], payload[i + 4], payload[i + 5], payload[i + 6], payload[i + 7]]);
+            dims.push(v as u32);
+        }
+    }
+    dims
+}
+
+/// Rewrite special forms (`&fill [shape] v`, `↯ [shape]`, `&fmt "s"`,
+/// `&provenance n`) into composite tokens.
+fn desugar(words: &[(usize, Tok)]) -> Result<Vec<(usize, Tok)>, String> {
+    let mut out = Vec::new();
+    let mut i = 0;
+    while i < words.len() {
+        let (ln, t) = &words[i];
+        match t {
+            Tok::Reshape { .. } => {
+                if let Some((_, Tok::List { payload, .. })) = words.get(i + 1) {
+                    let dims = dims_from_payload(payload);
+                    let mut d = [1u32; 4];
+                    for k in 0..dims.len() {
+                        d[k] = dims[k];
+                    }
+                    out.push((*ln, Tok::Reshape { rank: dims.len() as u8, dims: d }));
+                    i += 2;
+                    continue;
+                }
+                return Err(format!("line {}: ↯ needs a shape list", ln));
+            }
+            Tok::Sys(name) if name == "fill" => {
+                if let (Some((_, Tok::List { payload, .. })), Some((_, val))) =
+                    (words.get(i + 1), words.get(i + 2))
+                {
+                    let dims = dims_from_payload(payload);
+                    let (dtype, value) = match val {
+                        Tok::Float(v) => (DTYPE_F32, *v),
+                        Tok::Int(v) => (DTYPE_I64, *v as f64),
+                        _ => return Err(format!("line {}: &fill value must be a number", ln)),
+                    };
+                    let mut shape = [1u32; 4];
+                    for k in 0..dims.len() {
+                        shape[k] = dims[k];
+                    }
+                    out.push((*ln, Tok::Fill { dtype, rank: dims.len() as u8, shape, value }));
+                    i += 3;
+                    continue;
+                }
+                return Err(format!("line {}: &fill needs [shape] value", ln));
+            }
+            Tok::Sys(name) if name == "fmt" => {
+                if let Some((_, Tok::Str(tpl))) = words.get(i + 1) {
+                    out.push((*ln, Tok::Fmt { template: tpl.clone() }));
+                    i += 2;
+                    continue;
+                }
+                // bare &fmt (no template)
+                out.push((*ln, Tok::Fmt { template: Vec::new() }));
+            }
+            Tok::Sys(name) if name == "provenance" => {
+                if let Some((_, Tok::Int(n))) = words.get(i + 1) {
+                    out.push((*ln, Tok::Provenance(*n as u32)));
+                    i += 2;
+                    continue;
+                }
+                return Err(format!("line {}: &provenance needs a node id", ln));
+            }
+            _ => out.push(words[i].clone()),
+        }
+        i += 1;
+    }
+    Ok(out)
+}
+
+fn compile(src: &str, fuse: bool) -> Result<Vec<u8>, String> {
+    let toks = tokenize(src)?;
+    let mut c = Compiler {
+        enc: Encoder::new(),
+        stack: Vec::new(),
+        bindings: HashMap::new(),
+        fuse,
+        line: 1,
+        next_name: None,
+        parallel_axis: 0,
+    };
+
+    // Split into lines.
+    let mut lines: Vec<Vec<(usize, Tok)>> = Vec::new();
+    let mut cur: Vec<(usize, Tok)> = Vec::new();
+    for (ln, t) in toks {
+        if t == Tok::Newline {
+            if !cur.is_empty() {
+                lines.push(std::mem::take(&mut cur));
+            }
+        } else {
+            cur.push((ln, t));
+        }
+    }
+    if !cur.is_empty() {
+        lines.push(cur);
+    }
+
+    for stmt in lines {
+        if stmt.is_empty() {
+            continue;
+        }
+        c.line = stmt[0].0;
+        let is_binding = stmt.len() >= 2 && matches!(stmt[0].1, Tok::Ident(_)) && stmt[1].1 == Tok::Arrow;
+        if is_binding {
+            let name = match &stmt[0].1 {
+                Tok::Ident(n) => n.clone(),
+                _ => unreachable!(),
+            };
+            c.next_name = Some(name.clone());
+            let words = desugar(&stmt[2..])?;
+            c.eval_words(&words)?;
+            let v = c.stack.pop().ok_or_else(|| c.error("binding has no value"))?;
+            c.bindings.insert(name, v);
+        } else {
+            let words = desugar(&stmt)?;
+            c.eval_words(&words)?;
+        }
+    }
+
+    let mut bytes = c.enc.finish();
+    if fuse {
+        bytes = fuse_pass(&bytes);
+    }
+    Ok(bytes)
+}
+
+impl Compiler {
+    fn eval_words(&mut self, words: &[(usize, Tok)]) -> Result<(), String> {
+        // Uiua reads right-to-left.
+        for (ln, tok) in words.iter().rev() {
+            self.line = *ln;
+            self.eval_token(tok)?;
+        }
+        Ok(())
+    }
+
+    fn eval_token(&mut self, tok: &Tok) -> Result<(), String> {
+        match tok {
+            Tok::Int(v) => {
+                let payload = const_i64(&[*v]);
+                self.push_const(DTYPE_I64, 0, &[1, 1, 1, 1], &payload);
+                Ok(())
+            }
+            Tok::Float(v) => {
+                let payload = const_f32(&[*v as f32]);
+                self.push_const(DTYPE_F32, 0, &[1, 1, 1, 1], &payload);
+                Ok(())
+            }
+            Tok::Str(s) => {
+                let payload = const_u8(s);
+                self.push_const(DTYPE_U8, 1, &[s.len() as u32, 1, 1, 1], &payload);
+                Ok(())
+            }
+            Tok::List { dtype, rank, shape, payload } => {
+                self.push_const(*dtype, *rank, shape, payload);
+                Ok(())
+            }
+            Tok::Ident(name) => {
+                let v = self.bindings.get(name).cloned().ok_or_else(|| self.error(&format!("unknown name '{}'", name)))?;
+                self.stack.push(v);
+                Ok(())
+            }
+            Tok::Add => self.binop(OP_ADD, "Add"),
+            Tok::Sub => self.binop(OP_SUB, "Sub"),
+            Tok::Mul => self.binop(OP_MUL, "Multiply"),
+            Tok::Div => self.binop(OP_DIV, "Div"),
+            Tok::Sum => {
+                let a = self.pop()?;
+                let (rank, shape) = if a.rank == 0 {
+                    (0, [1u32, 1, 1, 1])
+                } else if a.rank == 1 {
+                    (0, [1u32, 1, 1, 1])
+                } else {
+                    (1, [a.shape[0], 1, 1, 1])
+                };
+                let n = self.emit(OP_REDUCE_SUM, a.dtype, rank, &shape, true, CAP_NONE, a.node, NONE, NONE, "ReduceSum", &[]);
+                self.stack.push(SValue { node: n, dtype: a.dtype, rank, shape });
+                Ok(())
+            }
+            Tok::Reverse => self.unop(OP_REVERSE, "Reverse", true, CAP_NONE),
+            Tok::Length => self.unop(OP_COUNT, "Count", true, CAP_NONE),
+            Tok::Reshape { rank, dims } => {
+                let data = self.pop()?;
+                let mut shape = [1u32; 4];
+                for d in 0..*rank as usize {
+                    shape[d] = dims[d];
+                }
+                if shape_elems(*rank, &shape) != shape_elems(data.rank, &data.shape) {
+                    return Err(self.error("reshape must preserve element count"));
+                }
+                let n = self.emit(OP_RESHAPE, data.dtype, *rank, &shape, true, CAP_NONE, data.node, NONE, NONE, "Reshape", &[]);
+                self.stack.push(SValue { node: n, dtype: data.dtype, rank: *rank, shape });
+                Ok(())
+            }
+            Tok::Fill { dtype, rank, shape, value } => {
+                let payload = const_fill(*dtype, *rank, shape, *value);
+                self.parallel_axis = if *rank > 0 { 1 } else { 0 };
+                let n = self.emit(OP_FILL, *dtype, *rank, shape, true, CAP_NONE, NONE, NONE, NONE, "Fill", &payload);
+                self.stack.push(SValue { node: n, dtype: *dtype, rank: *rank, shape: *shape });
+                Ok(())
+            }
+            Tok::Fmt { template } => {
+                let a = self.pop()?;
+                let n = self.emit(OP_FORMAT, DTYPE_U8, 1, &[0, 1, 1, 1], true, CAP_NONE, a.node, NONE, NONE, "Format", template);
+                self.stack.push(SValue { node: n, dtype: DTYPE_U8, rank: 1, shape: [0, 1, 1, 1] });
+                Ok(())
+            }
+            Tok::Provenance(id) => {
+                let payload = id.to_le_bytes().to_vec();
+                let n = self.emit(OP_PROVENANCE, DTYPE_U8, 1, &[0, 1, 1, 1], true, CAP_NONE, NONE, NONE, NONE, "Provenance", &payload);
+                self.stack.push(SValue { node: n, dtype: DTYPE_U8, rank: 1, shape: [0, 1, 1, 1] });
+                Ok(())
+            }
+            Tok::Sys(name) => self.eval_sys(name),
+            Tok::Arrow | Tok::Newline => Ok(()),
+        }
+    }
+
+    fn eval_sys(&mut self, name: &str) -> Result<(), String> {
+        match name {
+            "display" => self.unop(OP_DISPLAY, "Display", false, CAP_DISPLAY),
+            "keys" => {
+                let n = self.emit(OP_KEYBOARD, DTYPE_U8, 1, &[0, 1, 1, 1], false, CAP_KEYBOARD, NONE, NONE, NONE, "Keyboard", &[]);
+                self.stack.push(SValue { node: n, dtype: DTYPE_U8, rank: 1, shape: [0, 1, 1, 1] });
+                Ok(())
+            }
+            "graph-nodes" => {
+                self.source(OP_GRAPH_NODES, "GraphNodes");
+                Ok(())
+            }
+            "graph-edges" => {
+                self.source(OP_GRAPH_EDGES, "GraphEdges");
+                Ok(())
+            }
+            "machine" => {
+                self.source(OP_MACHINE_DESC, "MachineDesc");
+                Ok(())
+            }
+            "ready" => {
+                self.source(OP_READY_SET, "ReadySet");
+                Ok(())
+            }
+            "caps" => {
+                self.source(OP_CAPS, "Caps");
+                Ok(())
+            }
+            "names" => {
+                self.source(OP_NAMES, "Names");
+                Ok(())
+            }
+            "filter-pure" => {
+                let a = self.pop()?;
+                let payload = filter_payload(2, 1);
+                let n = self.emit(OP_FILTER, DTYPE_I64, 2, &a.shape, true, CAP_NONE, a.node, NONE, NONE, "Filter", &payload);
+                self.stack.push(SValue { node: n, dtype: DTYPE_I64, rank: 2, shape: a.shape });
+                Ok(())
+            }
+            "filter-effectful" => {
+                let a = self.pop()?;
+                let payload = filter_payload(2, 0);
+                let n = self.emit(OP_FILTER, DTYPE_I64, 2, &a.shape, true, CAP_NONE, a.node, NONE, NONE, "Filter", &payload);
+                self.stack.push(SValue { node: n, dtype: DTYPE_I64, rank: 2, shape: a.shape });
+                Ok(())
+            }
+            "sort-asc" => {
+                let a = self.pop()?;
+                let payload = [0u8, 0u8];
+                let n = self.emit(OP_SORT_BY, DTYPE_I64, 2, &a.shape, true, CAP_NONE, a.node, NONE, NONE, "SortBy", &payload);
+                self.stack.push(SValue { node: n, dtype: DTYPE_I64, rank: 2, shape: a.shape });
+                Ok(())
+            }
+            "sort-desc" => {
+                let a = self.pop()?;
+                let payload = [0u8, 1u8];
+                let n = self.emit(OP_SORT_BY, DTYPE_I64, 2, &a.shape, true, CAP_NONE, a.node, NONE, NONE, "SortBy", &payload);
+                self.stack.push(SValue { node: n, dtype: DTYPE_I64, rank: 2, shape: a.shape });
+                Ok(())
+            }
+            "order" => self.unop(OP_ORDER, "Order", true, CAP_NONE),
+            "rows" => {
+                let a = self.pop()?;
+                self.parallel_axis = 1;
+                let n = self.emit(OP_ROWS, a.dtype, a.rank, &a.shape, true, CAP_NONE, a.node, NONE, NONE, "Rows", &[]);
+                self.stack.push(SValue { node: n, dtype: a.dtype, rank: a.rank, shape: a.shape });
+                Ok(())
+            }
+            "send" => self.unop(OP_SEND, "Send", true, CAP_NONE),
+            "copy" => {
+                // dyadic: &copy trigger array (the trigger orders the copy)
+                let a = self.pop()?; // array
+                let trigger = self.pop()?; // ordering trigger
+                let n = self.emit(OP_COPY, a.dtype, a.rank, &a.shape, true, CAP_NONE, trigger.node, a.node, NONE, "Copy", &[]);
+                self.stack.push(SValue { node: n, dtype: a.dtype, rank: a.rank, shape: a.shape });
+                Ok(())
+            }
+            "copied" => {
+                let a = self.pop()?;
+                let n = self.emit(OP_COUNTER_COPIED, DTYPE_I64, 0, &[1, 1, 1, 1], true, CAP_NONE, a.node, NONE, NONE, "BytesCopied", &[]);
+                self.stack.push(SValue { node: n, dtype: DTYPE_I64, rank: 0, shape: [1, 1, 1, 1] });
+                Ok(())
+            }
+            "bytes" => {
+                let a = self.pop()?;
+                let n = self.emit(OP_COUNTER_BYTES, DTYPE_I64, 0, &[1, 1, 1, 1], true, CAP_NONE, a.node, NONE, NONE, "BytesMoved", &[]);
+                self.stack.push(SValue { node: n, dtype: DTYPE_I64, rank: 0, shape: [1, 1, 1, 1] });
+                Ok(())
+            }
+            "entries" => {
+                let a = self.pop()?;
+                let n = self.emit(OP_COUNTER_ENTRIES, DTYPE_I64, 0, &[1, 1, 1, 1], true, CAP_NONE, a.node, NONE, NONE, "KernelEntries", &[]);
+                self.stack.push(SValue { node: n, dtype: DTYPE_I64, rank: 0, shape: [1, 1, 1, 1] });
+                Ok(())
+            }
+            "zero" => {
+                let n = self.emit(OP_ZERO, DTYPE_I64, 0, &[1, 1, 1, 1], true, CAP_NONE, NONE, NONE, NONE, "Zero", &[]);
+                self.stack.push(SValue { node: n, dtype: DTYPE_I64, rank: 0, shape: [1, 1, 1, 1] });
+                Ok(())
+            }
+            "fmt-machine" => {
+                let n = self.emit(OP_FMT_MACHINE, DTYPE_U8, 1, &[0, 1, 1, 1], true, CAP_NONE, NONE, NONE, NONE, "FmtMachine", &[]);
+                self.stack.push(SValue { node: n, dtype: DTYPE_U8, rank: 1, shape: [0, 1, 1, 1] });
+                Ok(())
+            }
+            "stats" => {
+                let a = self.pop()?;
+                let n = self.emit(OP_STATS, DTYPE_U8, 1, &[0, 1, 1, 1], true, CAP_NONE, a.node, NONE, NONE, "Stats", &[]);
+                self.stack.push(SValue { node: n, dtype: DTYPE_U8, rank: 1, shape: [0, 1, 1, 1] });
+                Ok(())
+            }
+            other => Err(self.error(&format!("unknown system function '&{}'", other))),
+        }
+    }
+}
+
+/// Extract dims from a rank-1 i64 list value (a shape literal).
 fn filter_payload(col: u8, val: i64) -> Vec<u8> {
     let mut p = Vec::new();
     p.push(col);
     p.extend_from_slice(&val.to_le_bytes());
     p
+}
+
+/// Fusion pass: replace a single-consumer pure Add→Multiply chain with one
+/// AddMul kernel so the intermediate T = A+B is never materialized.
+fn fuse_pass(buf: &[u8]) -> Vec<u8> {
+    let prog = match uir::decode(buf) {
+        Ok(p) => p,
+        Err(_) => return buf.to_vec(),
+    };
+    let n = prog.nodes.len();
+    let mut dead = vec![false; n];
+    let mut consumers = vec![0u32; n];
+    for nd in &prog.nodes {
+        for inp in [nd.in0, nd.in1, nd.in2] {
+            if inp != NONE {
+                consumers[inp as usize] += 1;
+            }
+        }
+    }
+    let mut nodes = prog.nodes.clone();
+    for i in 0..n {
+        let nd = nodes[i];
+        if nd.op == OP_MUL && nd.pure {
+            // The Add may be either input of Multiply (× D + B A vs + B A × D).
+            for (add_slot, other_slot) in [(nd.in0, nd.in1), (nd.in1, nd.in0)] {
+                if add_slot == NONE || other_slot == NONE {
+                    continue;
+                }
+                let add_idx = add_slot as usize;
+                let add = nodes[add_idx];
+                if add.op == OP_ADD && add.pure && add.in2 == NONE && consumers[add_idx] == 1 {
+                    nodes[i].op = OP_ADD_MUL;
+                    nodes[i].in0 = add.in0;
+                    nodes[i].in1 = add.in1;
+                    nodes[i].in2 = other_slot;
+                    dead[add_idx] = true;
+                    break;
+                }
+            }
+        }
+    }
+
+    let mut enc = Encoder::new();
+    let mut remap = vec![NONE; n];
+    for (i, nd) in nodes.iter().enumerate() {
+        if !dead[i] {
+            remap[i] = enc.count;
+            let map = |x: u32| if x == NONE { NONE } else { remap[x as usize] };
+            let mut d = *nd;
+            d.in0 = map(d.in0);
+            d.in1 = map(d.in1);
+            d.in2 = map(d.in2);
+            let name: &[u8] = if d.op == OP_ADD_MUL { b"AddMul" } else { &prog.names[i] };
+            enc.node(&d, name, &prog.consts[i]);
+        }
+    }
+    enc.finish()
 }
 
 fn main() {
